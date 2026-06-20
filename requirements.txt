@@ -1,6 +1,7 @@
 # Core — installs fast/light, gets news + intraday text analysis live.
 requests==2.32.3
 PyMySQL==1.1.1
+cryptography==44.0.0
 pytz==2024.2
 python-dateutil==2.9.0.post0
 tenacity==9.0.0
