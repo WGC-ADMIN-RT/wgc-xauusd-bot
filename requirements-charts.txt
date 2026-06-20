@@ -1,0 +1,4 @@
+# Optional — the self-rendered M15 chart. Heavier; install after core is verified.
+# The bot publishes the text intraday plan even if these are absent.
+matplotlib==3.9.2
+mplfinance==0.12.10b0

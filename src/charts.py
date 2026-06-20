@@ -10,12 +10,12 @@ import os
 from datetime import datetime
 from typing import Dict, Optional
 
-import matplotlib
-matplotlib.use("Agg")  # headless server rendering
-import mplfinance as mpf
 import pandas as pd
 
 from config import config
+
+# matplotlib/mplfinance are imported lazily inside the renderer so the bot still
+# runs (news + text analysis) on a host where the heavy chart libs aren't installed.
 
 log = logging.getLogger("charts")
 
@@ -45,6 +45,14 @@ def render(snapshot: Dict) -> Optional[str]:
 
 
 def _render_self(snapshot: Dict) -> Optional[str]:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")  # headless server rendering
+        import mplfinance as mpf
+    except ImportError:
+        log.warning("matplotlib/mplfinance not installed — skipping chart (text plan still sent)")
+        return None
+
     df = snapshot.get("_m15_df")
     if df is None or len(df) == 0:
         log.error("No M15 dataframe in snapshot — cannot render chart")
