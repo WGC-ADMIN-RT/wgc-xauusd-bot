@@ -54,6 +54,9 @@ class Config:
     instrument: str = field(default_factory=lambda: _get("INSTRUMENT", "XAUUSD"))
     log_level: str = field(default_factory=lambda: _get("LOG_LEVEL", "INFO"))
 
+    # Intraday analysis timeframe (FMP slug). Client wants M5 -> "5min".
+    intraday_tf: str = field(default_factory=lambda: _get("INTRADAY_TF", "5min"))
+
     # News filter (spec: USD, high + medium impact only)
     news_currency: str = "USD"
     news_countries: tuple = ("United States",)
@@ -70,6 +73,11 @@ class Config:
     @property
     def tz(self):
         return pytz.timezone(self.timezone_name)
+
+    @property
+    def intraday_tf_label(self) -> str:
+        return {"1min": "M1", "5min": "M5", "15min": "M15", "30min": "M30",
+                "1hour": "H1", "4hour": "H4"}.get(self.intraday_tf, self.intraday_tf.upper())
 
     @property
     def target_chat_id(self) -> str:

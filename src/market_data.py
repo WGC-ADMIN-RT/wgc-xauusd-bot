@@ -145,38 +145,39 @@ def _session_levels(m15: pd.DataFrame) -> Dict:
 def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
     """Assemble the intraday data package (matches the spec's JSON shape)."""
     symbol = config.instrument
-    m15 = get_candles(M15, limit=200, symbol=symbol)
-    if len(m15) < 50:
-        raise MarketDataError(f"Insufficient M15 candles ({len(m15)})")
+    tf, tf_label = config.intraday_tf, config.intraday_tf_label
+    candles = get_candles(tf, limit=200, symbol=symbol)
+    if len(candles) < 50:
+        raise MarketDataError(f"Insufficient {tf_label} candles ({len(candles)})")
     h1 = get_candles(H1, limit=250, symbol=symbol)
 
-    levels = _session_levels(m15)
-    current_price = round(float(m15["close"].iloc[-1]), 2)
+    levels = _session_levels(candles)
+    current_price = round(float(candles["close"].iloc[-1]), 2)
 
     snapshot = {
         "instrument": symbol,
         "timestamp_sgt": datetime.now(config.tz).strftime("%Y-%m-%d %H:%M:%S"),
-        "screenshot_timeframe": "M15",
-        "candles_in_screenshot": int(len(m15)),
+        "screenshot_timeframe": tf_label,
+        "candles_in_screenshot": int(len(candles)),
         "current_price": current_price,
         "spread": None,  # not provided by FMP candles; populated later from broker feed
         "previous_day": levels["previous_day"],
         "today": levels["today"],
         "indicators": {
-            "m15_ema20": round(ema(m15["close"], 20), 2),
-            "m15_ema50": round(ema(m15["close"], 50), 2),
-            "m15_ema200": round(ema(m15["close"], 200), 2) if len(m15) >= 200 else None,
-            "m15_atr14": round(atr(m15, 14), 2),
+            "ema20": round(ema(candles["close"], 20), 2),
+            "ema50": round(ema(candles["close"], 50), 2),
+            "ema200": round(ema(candles["close"], 200), 2) if len(candles) >= 200 else None,
+            "atr14": round(atr(candles, 14), 2),
             "h1_ema50": round(ema(h1["close"], 50), 2) if len(h1) >= 50 else None,
             "h1_ema200": round(ema(h1["close"], 200), 2) if len(h1) >= 200 else None,
             "h4_trend": _h4_trend(symbol),
         },
         "upcoming_usd_news": upcoming_usd_news or [],
-        "_m15_df": m15,  # kept in-memory for the chart renderer; not serialized to DB
+        "_candles_df": candles,  # kept in-memory for the chart renderer; not serialized to DB
     }
-    log.info("Snapshot built: price=%s ema20=%s ema50=%s h4=%s",
-             current_price, snapshot["indicators"]["m15_ema20"],
-             snapshot["indicators"]["m15_ema50"], snapshot["indicators"]["h4_trend"])
+    log.info("Snapshot built (%s): price=%s ema20=%s ema50=%s h4=%s",
+             tf_label, current_price, snapshot["indicators"]["ema20"],
+             snapshot["indicators"]["ema50"], snapshot["indicators"]["h4_trend"])
     return snapshot
 
 

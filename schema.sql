@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS intraday_analyses (
     instrument          VARCHAR(16)  NOT NULL,
     analysis_time_utc   DATETIME     NOT NULL,
     analysis_time_sgt   DATETIME     NOT NULL,
-    timeframe           VARCHAR(8)   NOT NULL DEFAULT 'M15',
+    timeframe           VARCHAR(8)   NOT NULL DEFAULT 'M5',
     chart_path          VARCHAR(255) DEFAULT NULL,
     raw_market_data_json LONGTEXT    DEFAULT NULL,
     bias                VARCHAR(16)  DEFAULT NULL,

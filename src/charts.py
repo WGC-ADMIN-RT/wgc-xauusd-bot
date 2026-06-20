@@ -1,4 +1,4 @@
-"""Chart Renderer — 200-candle M15 XAU/USD chart with EMAs and key levels.
+"""Chart Renderer — 200-candle intraday XAU/USD chart (timeframe from config) with EMAs and key levels.
 
 Default provider is "self" (free, rendered with mplfinance). A "chartimg" provider
 (TradingView via Chart-IMG) can be slotted in later behind the same `render()` call.
@@ -53,10 +53,11 @@ def _render_self(snapshot: Dict) -> Optional[str]:
         log.warning("matplotlib/mplfinance not installed — skipping chart (text plan still sent)")
         return None
 
-    df = snapshot.get("_m15_df")
+    df = snapshot.get("_candles_df")
     if df is None or len(df) == 0:
-        log.error("No M15 dataframe in snapshot — cannot render chart")
+        log.error("No candle dataframe in snapshot — cannot render chart")
         return None
+    tf_label = config.intraday_tf_label
 
     plot_df = df[["open", "high", "low", "close", "volume"]].copy()
     plot_df.columns = ["Open", "High", "Low", "Close", "Volume"]
@@ -79,9 +80,9 @@ def _render_self(snapshot: Dict) -> Optional[str]:
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     stamp = datetime.now(config.tz).strftime("%Y%m%d_%H%M")
-    out_path = os.path.join(OUTPUT_DIR, f"{config.instrument}_M15_{stamp}.png")
+    out_path = os.path.join(OUTPUT_DIR, f"{config.instrument}_{tf_label}_{stamp}.png")
 
-    title = f"\n{config.instrument}  M15 — last {len(plot_df)} candles  ({stamp} SGT)"
+    title = f"\n{config.instrument}  {tf_label} — last {len(plot_df)} candles  ({stamp} SGT)"
     style = mpf.make_mpf_style(base_mpf_style="charles", rc={"font.size": 9})
 
     try:

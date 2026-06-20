@@ -27,7 +27,7 @@ All user-facing times are **SGT (Asia/Singapore)**; all timestamps stored **UTC*
 | News polarity | `src/polarity.py` | Deterministic event → USD/XAUUSD bias (no AI). |
 | Calendar service | `src/calendar_service.py` | Fetches USD news (FMP) — forecast/previous/actual. |
 | Market data | `src/market_data.py` | XAU/USD candles, price, EMAs, ATR, session levels. |
-| Chart renderer | `src/charts.py` | 200-candle M15 chart image. |
+| Chart renderer | `src/charts.py` | 200-candle intraday chart image (M5 default, `INTRADAY_TF`). |
 | Intraday analysis | `src/intraday.py` | Builds the daily plan (rule-based). |
 | Templates | `src/templates.py` | Message formatting (SGT). |
 | Publisher | `src/telegram_client.py` | Sends messages/photos to Telegram. |

@@ -62,7 +62,7 @@ def _dedupe_levels(levels: List[Tuple[float, str]], reverse: bool) -> List[Dict]
 def _bias(snapshot: Dict) -> str:
     ind = snapshot["indicators"]
     price = snapshot["current_price"]
-    ema20, ema50, ema200 = ind.get("m15_ema20"), ind.get("m15_ema50"), ind.get("m15_ema200")
+    ema20, ema50, ema200 = ind.get("ema20"), ind.get("ema50"), ind.get("ema200")
     h4 = ind.get("h4_trend", "range")
 
     score = 0
@@ -84,8 +84,8 @@ def _bias(snapshot: Dict) -> str:
 def _market_condition(snapshot: Dict, bias: str) -> str:
     ind = snapshot["indicators"]
     price = snapshot["current_price"]
-    atr = ind.get("m15_atr14") or 0.0
-    ema20, ema50 = ind.get("m15_ema20"), ind.get("m15_ema50")
+    atr = ind.get("atr14") or 0.0
+    ema20, ema50 = ind.get("ema20"), ind.get("ema50")
     pdh = snapshot["previous_day"].get("high")
     pdl = snapshot["previous_day"].get("low")
 
@@ -109,7 +109,7 @@ def _levels(snapshot: Dict) -> Tuple[List[Dict], List[Dict]]:
     price = snapshot["current_price"]
     pd_ = snapshot["previous_day"]
     td = snapshot["today"]
-    df = snapshot.get("_m15_df")
+    df = snapshot.get("_candles_df")
 
     labeled: List[Tuple[float, str, str]] = []  # (price, reason, side-hint unused)
     def add(val, reason):
@@ -143,38 +143,40 @@ def _levels(snapshot: Dict) -> Tuple[List[Dict], List[Dict]]:
 # ---------------------------------------------------------------------------
 
 def _scenarios(bias: str, res: List[Dict], sup: List[Dict]) -> Tuple[str, str]:
+    tf = config.intraday_tf_label
     r0 = res[0]["price"] if res else None
     s0 = sup[0]["price"] if sup else None
     if bias == "bullish":
-        buy = (f"Buy dips into {s0} while price holds above the EMAs — confirm with a bullish M15 close."
-               if s0 else "Buy dips that hold above the EMAs, confirmed by a bullish M15 close.")
-        sell = (f"Counter-trend only: sell if price rejects {r0} with a bearish M15 close."
-                if r0 else "Counter-trend sells only on a clear rejection with a bearish M15 close.")
+        buy = (f"Buy dips into {s0} while price holds above the EMAs — confirm with a bullish {tf} close."
+               if s0 else f"Buy dips that hold above the EMAs, confirmed by a bullish {tf} close.")
+        sell = (f"Counter-trend only: sell if price rejects {r0} with a bearish {tf} close."
+                if r0 else f"Counter-trend sells only on a clear rejection with a bearish {tf} close.")
     elif bias == "bearish":
-        sell = (f"Sell rallies into {r0} while price stays below the EMAs — confirm with a bearish M15 close."
-                if r0 else "Sell rallies that stay below the EMAs, confirmed by a bearish M15 close.")
-        buy = (f"Counter-trend only: buy if price reclaims {s0} with a bullish M15 close back above it."
-               if s0 else "Counter-trend buys only on a clean reclaim with a bullish M15 close.")
+        sell = (f"Sell rallies into {r0} while price stays below the EMAs — confirm with a bearish {tf} close."
+                if r0 else f"Sell rallies that stay below the EMAs, confirmed by a bearish {tf} close.")
+        buy = (f"Counter-trend only: buy if price reclaims {s0} with a bullish {tf} close back above it."
+               if s0 else f"Counter-trend buys only on a clean reclaim with a bullish {tf} close.")
     else:  # range
-        buy = (f"Buy near {s0} on a rejection wick + bullish M15 close (range support)."
+        buy = (f"Buy near {s0} on a rejection wick + bullish {tf} close (range support)."
                if s0 else "Buy near range support on a bullish rejection close.")
-        sell = (f"Sell near {r0} on a rejection wick + bearish M15 close (range resistance)."
+        sell = (f"Sell near {r0} on a rejection wick + bearish {tf} close (range resistance)."
                 if r0 else "Sell near range resistance on a bearish rejection close.")
     return buy, sell
 
 
 def _invalidation(bias: str, res: List[Dict], sup: List[Dict]) -> str:
+    tf = config.intraday_tf_label
     r0 = res[0]["price"] if res else None
     s0 = sup[0]["price"] if sup else None
     if bias == "bullish":
-        return f"An M15 close below {s0} invalidates the bullish plan." if s0 else \
-               "An M15 close below key support invalidates the bullish plan."
+        return f"An {tf} close below {s0} invalidates the bullish plan." if s0 else \
+               f"An {tf} close below key support invalidates the bullish plan."
     if bias == "bearish":
-        return f"An M15 close above {r0} invalidates the bearish plan." if r0 else \
-               "An M15 close above key resistance invalidates the bearish plan."
+        return f"An {tf} close above {r0} invalidates the bearish plan." if r0 else \
+               f"An {tf} close above key resistance invalidates the bearish plan."
     if r0 and s0:
-        return f"A decisive M15 close beyond {r0} or below {s0} breaks the range."
-    return "A decisive M15 close beyond the range extremes changes the plan."
+        return f"A decisive {tf} close beyond {r0} or below {s0} breaks the range."
+    return f"A decisive {tf} close beyond the range extremes changes the plan."
 
 
 def _preferred_plan(bias: str, condition: str) -> str:
@@ -233,7 +235,7 @@ def build_plan(snapshot: Dict, upcoming_events: Optional[List[Dict]] = None) -> 
     result = {
         "analysis_type": "intraday_plan",
         "instrument": snapshot["instrument"],
-        "timeframe": "M15",
+        "timeframe": config.intraday_tf_label,
         "bias": bias,
         "market_condition": condition,
         "key_resistance": res,
@@ -253,12 +255,12 @@ def build_plan(snapshot: Dict, upcoming_events: Optional[List[Dict]] = None) -> 
 
 def to_db_row(snapshot: Dict, plan: Dict, chart_path: Optional[str]) -> Dict:
     """Shape an intraday_analyses row (snapshot's in-memory df is stripped)."""
-    raw = {k: v for k, v in snapshot.items() if k != "_m15_df"}
+    raw = {k: v for k, v in snapshot.items() if k != "_candles_df"}
     return {
         "instrument": snapshot["instrument"],
         "analysis_time_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
         "analysis_time_sgt": datetime.now(config.tz).strftime("%Y-%m-%d %H:%M:%S"),
-        "timeframe": "M15",
+        "timeframe": config.intraday_tf_label,
         "chart_path": chart_path,
         "raw_market_data_json": json.dumps(raw, default=str),
         "bias": plan["bias"],
