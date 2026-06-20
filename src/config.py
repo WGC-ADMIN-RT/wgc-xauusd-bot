@@ -31,6 +31,7 @@ class DBConfig:
     user: str = field(default_factory=lambda: _get("DB_USER", "upayztec_wgcxau"))
     password: str = field(default_factory=lambda: _get("DB_PASSWORD"))
     port: int = field(default_factory=lambda: _get_int("DB_PORT", 3306))
+    socket: str = field(default_factory=lambda: _get("DB_SOCKET"))  # cPanel grants @localhost -> use socket
 
 
 @dataclass(frozen=True)

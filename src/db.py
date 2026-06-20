@@ -24,20 +24,44 @@ log = logging.getLogger("db")
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "schema.sql")
 
+# cPanel MySQL users are granted on @localhost, which only matches a unix-socket
+# connection. PyMySQL otherwise connects over TCP (::1) and is denied. So when the
+# host is local, prefer the socket (explicit DB_SOCKET, else the common paths).
+_SOCKET_CANDIDATES = [
+    "/var/lib/mysql/mysql.sock",
+    "/var/run/mysqld/mysqld.sock",
+    "/tmp/mysql.sock",
+]
+
+
+def _detect_socket() -> Optional[str]:
+    if config.db.socket:
+        return config.db.socket
+    if config.db.host in ("localhost", "127.0.0.1", "::1"):
+        for path in _SOCKET_CANDIDATES:
+            if os.path.exists(path):
+                return path
+    return None
+
 
 @contextmanager
 def get_conn():
-    conn = pymysql.connect(
-        host=config.db.host,
+    kwargs = dict(
         user=config.db.user,
         password=config.db.password,
         database=config.db.name,
-        port=config.db.port,
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=False,
         connect_timeout=15,
     )
+    sock = _detect_socket()
+    if sock:
+        kwargs["unix_socket"] = sock
+    else:
+        kwargs["host"] = config.db.host
+        kwargs["port"] = config.db.port
+    conn = pymysql.connect(**kwargs)
     try:
         yield conn
         conn.commit()
