@@ -1,0 +1,21 @@
+# Secrets & local config
+.env
+config_local.py
+*.secret
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime artifacts
+*.log
+logs/
+charts_out/
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
