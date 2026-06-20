@@ -15,11 +15,15 @@ import calendar_service  # noqa: E402
 import db  # noqa: E402
 import templates  # noqa: E402
 import telegram_client  # noqa: E402
+import schedule_guard  # noqa: E402
 
 log = logging.getLogger("job.outlook")
 
 
 def main() -> None:
+    # SGT self-gate (DST-proof): only fire inside the 12:00 SGT window, once/day.
+    if "--force" not in sys.argv and not schedule_guard.daily_due(config.daily_outlook_sgt, 10, "outlook"):
+        return
     now_sgt = datetime.now(config.tz)
     try:
         events = calendar_service.get_outlook(now_sgt)
@@ -43,6 +47,7 @@ def main() -> None:
     message = templates.daily_outlook(now_sgt.strftime("%d %b %Y"), tdicts)
     telegram_client.send_message(message)
     db.audit("outlook", "sent", output_json=f"{len(events)} events")
+    schedule_guard.mark_done("outlook")
     log.info("Outlook published (%d events)", len(events))
 
 
