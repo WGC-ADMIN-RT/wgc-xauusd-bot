@@ -14,6 +14,22 @@ import logging
 import os
 import sys
 
+# Cap native BLAS/threadpool threads BEFORE numpy/pandas (and their OpenBLAS
+# backend) are imported anywhere. On this shared cPanel host the per-account
+# process limit (RLIMIT_NPROC) is low; OpenBLAS otherwise spawns one thread per
+# core (~12), blowing the cap -> "pthread_create failed: Resource temporarily
+# unavailable" and an interrupted, half-initialized numpy import. setdefault so
+# a real env var (e.g. a cron prefix) can still override.
+for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
+# Never write .pyc bytecode. On this host a numpy import that gets interrupted
+# mid-load (OpenBLAS thread-spawn stall -> process killed) leaves a truncated
+# .pyc that permanently breaks every later import ("cannot import name 'utils'
+# from partially initialized numpy.lib") until numpy is reinstalled. Reading
+# .py source each run is cheap here and removes that failure mode entirely.
+sys.dont_write_bytecode = True
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
