@@ -3,7 +3,7 @@
 # one-shot). Idempotent: safe to re-run. Assumes the repo is cloned at ~/wgc-xauusd-bot
 # and a .env file is present there.
 set -u
-export HOME="${HOME:-/home/upayztec}"
+# HOME is set automatically in cPanel Terminal; do not hardcode an account name here.
 APP="$HOME/wgc-xauusd-bot"
 cd "$APP" || { echo "App dir $APP missing"; exit 1; }
 
@@ -15,7 +15,6 @@ for cand in \
   "$(command -v python3.9 || true)" \
   /opt/alt/python39/bin/python3.9 \
   /opt/alt/python311/bin/python3.11 \
-  "$HOME/virtualenv/monitor/3.9/bin/python" \
   "$(command -v python3 || true)"; do
   if [ -n "$cand" ] && [ -x "$cand" ]; then PY="$cand"; break; fi
 done

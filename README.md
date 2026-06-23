@@ -35,10 +35,39 @@ All user-facing times are **SGT (Asia/Singapore)**; all timestamps stored **UTC*
 
 ## Deploy target
 
-OrangeHost cPanel (`upayztec`), Python 3.9 shared venv at
-`/home/upayztec/virtualenv/monitor/3.9/bin/python`. Runs via cron + flock, isolated from
-the existing `monitor` and `wings-gold-bot` jobs.
+OrangeHost **cPanel** (any account). The app lives at `~/wgc-xauusd-bot` with its own
+`.venv`. Cron entries use `run_job.sh` + `flock` so overlapping ticks never double-send
+(see `cron.example`).
+
+## First-time setup (new cPanel account)
+
+1. **MySQL** — cPanel → *MySQL Databases*: create database `YOUR_USER_wgcxau`, user, and
+   password; grant the user *All Privileges* on that database.
+2. **Code** — cPanel → *Git Version Control* (clone
+   `https://github.com/WGC-ADMIN-RT/wgc-xauusd-bot.git`) **or** upload the folder to
+   `~/wgc-xauusd-bot`.
+3. **Secrets** — copy `.env.example` → `.env`, fill in DB creds + API keys (same Telegram
+   / FMP keys as before if you are migrating).
+4. **Install** — cPanel → *Terminal*: `cd ~/wgc-xauusd-bot && bash deploy.sh`
+5. **Cron** — cPanel → *Cron Jobs*: add the three lines from `cron.example` (replace
+   `YOUR_USER` with your cPanel username).
+6. **Smoke test** — in Terminal:
+   `.venv/bin/python jobs/run_outlook.py --force`
+   `.venv/bin/python jobs/run_intraday.py --force`
+   Confirm messages arrive in the WGC Bots Telegram group.
+
+## Migrating from another OrangeHost account (e.g. upayztec → new account)
+
+1. On the **new** account: complete *First-time setup* steps 1–5 above.
+2. Copy the **old** `.env` and change only the three DB lines (`DB_NAME`, `DB_USER`,
+   `DB_PASSWORD`) to the new database. Keep Telegram, FMP, Chart-IMG, and Anthropic keys
+   unchanged unless you are rotating them.
+3. Run the smoke-test commands on the new account.
+4. On the **old** account: disable or delete the three WGC cron jobs so nothing posts twice.
+
+The old account’s MySQL data is **not** copied automatically; Phase 1 only needs empty
+tables (created by `deploy.sh`). Alert flags (`sent_*`) start fresh on the new DB.
 
 ## Secrets
 
-Never committed. Live as environment variables on the server (see `.env.example`).
+Never committed. Live in `~/wgc-xauusd-bot/.env` on the server (see `.env.example`).

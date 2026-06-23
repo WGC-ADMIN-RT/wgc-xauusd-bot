@@ -1,12 +1,16 @@
-"""Intraday Analysis (Task 2) — rule-based daily plan, no AI.
+"""Intraday Analysis (Task 2) — AI-first daily plan with a deterministic fallback.
 
 Consumes a market_data snapshot (+ upcoming USD news) and produces the structured
-plan that fills the 📈 intraday template: bias, key support/resistance with reasons,
-buy/sell scenarios, invalidation, preferred plan, and news risk.
+plan behind the 📈 intraday message. Two engines:
 
-Replaces the spec's GPT step with deterministic logic for Phase 1. The output schema
-mirrors the spec's "Required JSON output" so an AI pass can be slotted in later without
-changing downstream code.
+  * AI (default): Claude as a 20-yr XAUUSD trader (M5 execution, H1 bias) emits key
+    ZONES (price ranges) + 4-5 game plans via tool-use — see ai_intraday.py.
+  * Rule-based fallback: the original deterministic logic (bias, S/R levels, buy/sell
+    scenarios). Used when AI is disabled, unkeyed, or the API call fails, so the 2:30
+    job never goes dark.
+
+Both engines return the same result contract (bias, market_condition, member_message,
+preferred_plan, plan_json-able), so run_intraday.py / to_db_row are engine-agnostic.
 """
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from config import config
+import ai_intraday
 import templates
 
 log = logging.getLogger("intraday")
@@ -62,8 +67,10 @@ def _dedupe_levels(levels: List[Tuple[float, str]], reverse: bool) -> List[Dict]
 def _bias(snapshot: Dict) -> str:
     ind = snapshot["indicators"]
     price = snapshot["current_price"]
-    ema20, ema50, ema200 = ind.get("ema20"), ind.get("ema50"), ind.get("ema200")
-    h4 = ind.get("h4_trend", "range")
+    ema20 = ind.get("m5_ema20") or ind.get("ema20")
+    ema50 = ind.get("m5_ema50") or ind.get("ema50")
+    ema200 = ind.get("m5_ema200") or ind.get("ema200")
+    h1 = (snapshot.get("h1_structure") or {}).get("trend") or ind.get("h1_trend") or "range"
 
     score = 0
     if ema20 is not None:
@@ -72,7 +79,7 @@ def _bias(snapshot: Dict) -> str:
         score += 1 if ema20 > ema50 else -1
     if ema200 is not None:
         score += 1 if price > ema200 else -1
-    score += {"bullish": 1, "bearish": -1}.get(h4, 0)
+    score += {"bullish": 1, "bearish": -1}.get(h1, 0)
 
     if score >= 2:
         return "bullish"
@@ -84,8 +91,9 @@ def _bias(snapshot: Dict) -> str:
 def _market_condition(snapshot: Dict, bias: str) -> str:
     ind = snapshot["indicators"]
     price = snapshot["current_price"]
-    atr = ind.get("atr14") or 0.0
-    ema20, ema50 = ind.get("ema20"), ind.get("ema50")
+    atr = ind.get("m5_atr14") or ind.get("atr14") or 0.0
+    ema20 = ind.get("m5_ema20") or ind.get("ema20")
+    ema50 = ind.get("m5_ema50") or ind.get("ema50")
     pdh = snapshot["previous_day"].get("high")
     pdl = snapshot["previous_day"].get("low")
 
@@ -209,53 +217,207 @@ def _news_risk(upcoming: List[Dict]) -> Tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 def build_plan(snapshot: Dict, upcoming_events: Optional[List[Dict]] = None) -> Dict:
+    """Dispatch to the AI engine when configured, else the rule-based fallback."""
     upcoming_events = upcoming_events or []
-    bias = _bias(snapshot)
-    condition = _market_condition(snapshot, bias)
-    res, sup = _levels(snapshot)
-    buy, sell = _scenarios(bias, res, sup)
-    invalidation = _invalidation(bias, res, sup)
-    plan = _preferred_plan(bias, condition)
-    news_risk, news_summary = _news_risk(upcoming_events)
+    if config.intraday_ai_enabled and config.anthropic_api_key:
+        try:
+            ai = ai_intraday.generate(snapshot, upcoming_events)
+            if ai:
+                return _ai_plan_result(snapshot, ai, upcoming_events)
+        except Exception:
+            log.exception("AI intraday failed — falling back to rule-based plan")
+    return _rule_based_plan(snapshot, upcoming_events)
 
-    date_sgt = datetime.now(config.tz).strftime("%d %b %Y")
-    member_message = templates.intraday_plan(
+
+def _normalize_zones(zones: List[Dict]) -> List[Dict]:
+    """Ensure each zone has low, high, label for the member template."""
+    out = []
+    for z in zones or []:
+        if z.get("low") is None or z.get("high") is None:
+            continue
+        out.append({
+            "low": z["low"],
+            "high": z["high"],
+            "label": (z.get("label") or z.get("reason") or "").strip(),
+        })
+    return out
+
+
+def _zone_range(z: Dict) -> str:
+    lo, hi = float(z["low"]), float(z["high"])
+    if lo > hi:
+        lo, hi = hi, lo
+    return f"{lo:.2f}".rstrip("0").rstrip(".") + "-" + f"{hi:.2f}".rstrip("0").rstrip(".")
+
+
+def _rule_based_gameplans(
+    bias: str, demand: List[Dict], supply: List[Dict], snapshot: Dict,
+) -> List[Dict]:
+    """Four conditional game plans in trader prose (fallback when AI is unavailable)."""
+    tf = config.intraday_tf_label
+    h1 = (snapshot.get("h1_structure") or {})
+    struct_h, struct_l = h1.get("structure_high"), h1.get("structure_low")
+    plans: List[Dict] = []
+
+    if demand:
+        z = demand[0]
+        rng = _zone_range(z)
+        tag = z.get("label") or "demand"
+        if bias == "bullish":
+            plans.append({"text": (
+                f"Our {tag} zone at {rng} is today's primary demand. If price holds "
+                f"the zone and prints a {tf} bullish CHoCH, look for longs on a pullback "
+                f"to an {tf} FVG while H1 stays {bias}; a {tf} close below the zone "
+                f"invalidates the long idea."
+            )})
+        else:
+            plans.append({"text": (
+                f"Our {tag} zone at {rng} is a pivotal decision area. If price sweeps "
+                f"into the zone and rejects with a {tf} bearish CHoCH, look for shorts "
+                f"toward the next demand pocket; acceptance below the zone opens continuation "
+                f"shorts in line with H1 {bias}."
+            )})
+
+    if supply:
+        z = supply[0]
+        rng = _zone_range(z)
+        tag = z.get("label") or "supply"
+        plans.append({"text": (
+            f"At our {tag} zone ({rng}), watch for a fade if price runs into supply and "
+            f"prints a {tf} bearish CHoCH — target the nearest demand zone below. "
+            f"A clean {tf} close above the zone targets the next H1 supply shelf."
+        )})
+
+    if struct_l:
+        plans.append({"text": (
+            f"Potential longs if price breaks and holds above the prior H1 structure low "
+            f"at {struct_l} with a {tf} bullish CHoCH; wait for a pullback to an {tf} "
+            f"FVG before entry while H1 bias remains {bias}."
+        )})
+
+    if struct_h:
+        plans.append({"text": (
+            f"Potential shorts if price rejects the H1 structure high at {struct_h} with "
+            f"a {tf} bearish CHoCH; scale into supply on the retest and target the "
+            f"nearest demand zone."
+        )})
+
+    if len(plans) < 4 and len(demand) > 1:
+        z = demand[1]
+        rng = _zone_range(z)
+        plans.append({"text": (
+            f"Secondary demand at {rng}: range long only on a sharp {tf} rejection wick "
+            f"+ bullish close; skip if H1 momentum is strongly against the trade."
+        )})
+
+    return plans[: max(4, min(5, config.intraday_gameplans))]
+
+
+def _ai_plan_result(snapshot: Dict, ai: Dict, upcoming_events: List[Dict]) -> Dict:
+    """Shape the AI tool output into the standard plan contract + member message."""
+    bias = str(ai.get("h1_bias") or ai.get("market_bias") or "range").lower()
+    demand = _normalize_zones(ai.get("demand_zones") or ai.get("support_zones"))
+    supply = _normalize_zones(ai.get("supply_zones") or ai.get("resistance_zones"))
+    if not demand:
+        demand = _normalize_zones((snapshot.get("zone_hints") or {}).get("demand"))
+    if not supply:
+        supply = _normalize_zones((snapshot.get("zone_hints") or {}).get("supply"))
+    gameplans = ai.get("gameplans") or []
+    news_risk_level, news_default = _news_risk(upcoming_events)
+    news_summary = ai.get("news_risk") or news_default
+    h1_context = ai.get("h1_context") or ""
+
+    date_sgt = datetime.now(config.tz).strftime("%A, %d %b %Y")
+    member_message = templates.intraday_plan_ai(
         date_sgt=date_sgt,
-        bias=bias.capitalize(),
-        market_condition=condition.capitalize(),
-        key_resistance=res,
-        key_support=sup,
-        buy_condition=buy,
-        sell_condition=sell,
-        invalidation=invalidation,
+        h1_bias=bias,
+        h1_context=h1_context,
+        demand_zones=demand,
+        supply_zones=supply,
+        gameplans=gameplans,
         news_summary=news_summary,
-        preferred_plan=plan,
     )
 
     result = {
-        "analysis_type": "intraday_plan",
+        "analysis_type": "intraday_gameplan",
         "instrument": snapshot["instrument"],
-        "timeframe": config.intraday_tf_label,
+        "timeframe": "M5",
+        "bias_timeframe": "H1",
+        "engine": "ai",
+        "ai_model": config.intraday_ai_model,
         "bias": bias,
-        "market_condition": condition,
-        "key_resistance": res,
-        "key_support": sup,
-        "buy_scenario": {"valid": True, "condition": buy},
-        "sell_scenario": {"valid": True, "condition": sell},
-        "invalidation": invalidation,
-        "news_risk": news_risk,
-        "preferred_plan": plan,
+        "h1_context": h1_context,
+        "demand_zones": demand,
+        "supply_zones": supply,
+        "gameplans": gameplans,
+        "news_risk": news_risk_level,
+        "preferred_plan": f"H1 {bias} — M5 gameplan",
         "member_message": member_message,
     }
-    log.info("Intraday plan: bias=%s condition=%s plan=%s news_risk=%s res=%s sup=%s",
-             bias, condition, plan, news_risk,
-             [r["price"] for r in res], [s["price"] for s in sup])
+    log.info("AI intraday plan: h1=%s demand=%d supply=%d gameplans=%d",
+             bias, len(demand), len(supply), len(gameplans))
+    return result
+
+
+def _rule_based_plan(snapshot: Dict, upcoming_events: Optional[List[Dict]] = None) -> Dict:
+    upcoming_events = upcoming_events or []
+    bias = _bias(snapshot)
+    hints = snapshot.get("zone_hints") or {}
+    demand = _normalize_zones(hints.get("demand"))
+    supply = _normalize_zones(hints.get("supply"))
+    if not demand and not supply:
+        res, sup = _levels(snapshot)
+        atr = snapshot["indicators"].get("m5_atr14") or snapshot["indicators"].get("atr14") or 1.0
+        for lv in sup:
+            half = max(atr * 0.15, lv["price"] * 0.001)
+            demand.append({"low": round(lv["price"] - half, 2), "high": round(lv["price"] + half, 2),
+                           "label": lv["reason"]})
+        for lv in res:
+            half = max(atr * 0.15, lv["price"] * 0.001)
+            supply.append({"low": round(lv["price"] - half, 2), "high": round(lv["price"] + half, 2),
+                           "label": lv["reason"]})
+    gameplans = _rule_based_gameplans(bias, demand, supply, snapshot)
+    news_risk, news_summary = _news_risk(upcoming_events)
+    h1 = snapshot.get("h1_structure") or {}
+    h1_context = (
+        f"H1 is {bias} with structure high {h1.get('structure_high') or '—'} and "
+        f"structure low {h1.get('structure_low') or '—'}; execute on M5 only."
+    )
+
+    date_sgt = datetime.now(config.tz).strftime("%A, %d %b %Y")
+    member_message = templates.intraday_plan_ai(
+        date_sgt=date_sgt,
+        h1_bias=bias,
+        h1_context=h1_context,
+        demand_zones=demand,
+        supply_zones=supply,
+        gameplans=gameplans,
+        news_summary=news_summary,
+    )
+
+    result = {
+        "analysis_type": "intraday_gameplan",
+        "instrument": snapshot["instrument"],
+        "timeframe": "M5",
+        "bias_timeframe": "H1",
+        "engine": "rule_based",
+        "bias": bias,
+        "h1_context": h1_context,
+        "demand_zones": demand,
+        "supply_zones": supply,
+        "gameplans": gameplans,
+        "news_risk": news_risk,
+        "preferred_plan": f"H1 {bias} — M5 gameplan",
+        "member_message": member_message,
+    }
+    log.info("Rule-based gameplan: h1=%s demand=%d supply=%d gameplans=%d",
+             bias, len(demand), len(supply), len(gameplans))
     return result
 
 
 def to_db_row(snapshot: Dict, plan: Dict, chart_path: Optional[str]) -> Dict:
     """Shape an intraday_analyses row (snapshot's in-memory candles are stripped)."""
-    raw = {k: v for k, v in snapshot.items() if k != "_candles"}
+    raw = {k: v for k, v in snapshot.items() if not k.startswith("_")}
     return {
         "instrument": snapshot["instrument"],
         "analysis_time_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
@@ -264,7 +426,7 @@ def to_db_row(snapshot: Dict, plan: Dict, chart_path: Optional[str]) -> Dict:
         "chart_path": chart_path,
         "raw_market_data_json": json.dumps(raw, default=str),
         "bias": plan["bias"],
-        "market_condition": plan["market_condition"],
+        "market_condition": plan.get("market_condition") or plan.get("bias"),
         "plan_json": json.dumps(plan, default=str),
         "member_message": plan["member_message"],
     }

@@ -27,8 +27,8 @@ def _get_int(key: str, default: int) -> int:
 @dataclass(frozen=True)
 class DBConfig:
     host: str = field(default_factory=lambda: _get("DB_HOST", "localhost"))
-    name: str = field(default_factory=lambda: _get("DB_NAME", "upayztec_wgcxau"))
-    user: str = field(default_factory=lambda: _get("DB_USER", "upayztec_wgcxau"))
+    name: str = field(default_factory=lambda: _get("DB_NAME"))
+    user: str = field(default_factory=lambda: _get("DB_USER"))
     password: str = field(default_factory=lambda: _get("DB_PASSWORD"))
     port: int = field(default_factory=lambda: _get_int("DB_PORT", 3306))
     socket: str = field(default_factory=lambda: _get("DB_SOCKET"))  # cPanel grants @localhost -> use socket
@@ -71,6 +71,18 @@ class Config:
     # Intraday analysis timeframe (FMP slug). Client wants M5 -> "5min".
     intraday_tf: str = field(default_factory=lambda: _get("INTRADAY_TF", "5min"))
 
+    # Intraday AI analysis — Claude as a 20-yr XAUUSD trader (M5 execution, H1 bias),
+    # emitting key zones as ranges + 4-5 game plans. When enabled AND ANTHROPIC_API_KEY
+    # is set, the 2:30 PM plan is AI-generated via tool-use; otherwise (disabled,
+    # unkeyed, or the call fails) it falls back to the deterministic rule-based plan.
+    anthropic_api_key: str = field(default_factory=lambda: _get("ANTHROPIC_API_KEY"))
+    intraday_ai_enabled: bool = field(
+        default_factory=lambda: _get("INTRADAY_AI_ENABLED", "true").lower()
+        in ("1", "true", "yes", "on"))
+    intraday_ai_model: str = field(
+        default_factory=lambda: _get("INTRADAY_AI_MODEL", "claude-opus-4-8"))
+    intraday_gameplans: int = field(default_factory=lambda: _get_int("INTRADAY_GAMEPLANS", 5))
+
     # News filter (spec: USD, high + medium impact only)
     news_currency: str = "USD"
     news_countries: tuple = ("United States",)
@@ -104,6 +116,10 @@ class Config:
             problems.append("FMP_API_KEY is not set")
         if not self.telegram_token:
             problems.append("TELEGRAM_BOT_TOKEN is not set")
+        if not self.db.name:
+            problems.append("DB_NAME is not set")
+        if not self.db.user:
+            problems.append("DB_USER is not set")
         if not self.db.password:
             problems.append("DB_PASSWORD is not set")
         if not self.target_chat_id:

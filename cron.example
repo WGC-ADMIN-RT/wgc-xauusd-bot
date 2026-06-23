@@ -1,0 +1,14 @@
+# cPanel → Cron Jobs — dyznoaic account (OrangeHost).
+# Command field uses the full path; schedule times below are server-local (US Eastern
+# on OrangeHost). Daily jobs self-gate on SGT (12:00 / 14:30), so run them every 5 min.
+
+# --- Every 5 minutes: daily outlook (fires once at 12:00 PM SGT) ---
+# Minute: */5   Hour: *   Day: *   Month: *   Weekday: *
+cd /home/dyznoaic/wgc-xauusd-bot && flock -n /tmp/wgc-outlook.lock .venv/bin/python jobs/run_outlook.py
+
+# --- Every 5 minutes: intraday plan (fires once at 2:30 PM SGT) ---
+cd /home/dyznoaic/wgc-xauusd-bot && flock -n /tmp/wgc-intraday.lock .venv/bin/python jobs/run_intraday.py
+
+# --- Every minute: 1h / 15m pre-news alerts + post-release breakdown ---
+# Minute: *   Hour: *   Day: *   Month: *   Weekday: *
+cd /home/dyznoaic/wgc-xauusd-bot && flock -n /tmp/wgc-news.lock .venv/bin/python jobs/run_news_cycle.py

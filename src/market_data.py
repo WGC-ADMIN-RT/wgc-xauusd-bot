@@ -148,15 +148,28 @@ def atr(candles: List[Dict], period: int = 14) -> Optional[float]:
     return a
 
 
-def _h4_trend(symbol: str) -> str:
-    """Bullish/bearish/range from H4 close vs EMA50 and its slope."""
-    try:
-        h4 = get_candles(H4, limit=120, symbol=symbol)
-    except MarketDataError:
+def _swing_highs_lows(candles: List[Dict], window: int = 5):
+    """Recent swing highs / lows (oldest→newest within the returned tail)."""
+    highs: List[float] = []
+    lows: List[float] = []
+    if len(candles) < window * 2 + 1:
+        return highs, lows
+    h = [c["high"] for c in candles]
+    l = [c["low"] for c in candles]
+    n = len(candles)
+    for i in range(window, n - window):
+        if h[i] == max(h[i - window:i + window + 1]):
+            highs.append(round(h[i], 2))
+        if l[i] == min(l[i - window:i + window + 1]):
+            lows.append(round(l[i], 2))
+    return highs, lows
+
+
+def _h1_trend(h1_candles: List[Dict]) -> str:
+    """Bullish/bearish/range from H1 close vs EMA50 and its slope."""
+    if len(h1_candles) < 55:
         return "range"
-    if len(h4) < 55:
-        return "range"
-    closes = [c["close"] for c in h4]
+    closes = [c["close"] for c in h1_candles]
     e50 = _ema_series(closes, 50)
     last_close = closes[-1]
     last_e, prev_e = e50[-1], e50[-10]
@@ -166,6 +179,73 @@ def _h4_trend(symbol: str) -> str:
     if last_close < last_e and falling:
         return "bearish"
     return "range"
+
+
+def _price_zone(center: float, atr_val: Optional[float], reason: str) -> Dict:
+    """Turn a single level into a supply/demand zone range (never a single tick)."""
+    half = max((atr_val or 1.0) * 0.18, center * 0.0009, 0.5)
+    lo, hi = round(center - half, 2), round(center + half, 2)
+    return {"low": lo, "high": hi, "reason": reason}
+
+
+def _dedupe_zones(zones: List[Dict], price: float) -> List[Dict]:
+    """Merge zones whose midpoints are within ~0.12% of each other."""
+    out: List[Dict] = []
+    for z in sorted(zones, key=lambda x: (x["high"] + x["low"]) / 2):
+        mid = (z["high"] + z["low"]) / 2
+        if any(abs(mid - (o["high"] + o["low"]) / 2) / max(mid, 1) < 0.0012 for o in out):
+            continue
+        out.append(z)
+    return out
+
+
+def _zone_hints(m5: List[Dict], h1: List[Dict], levels: Dict, price: float) -> Dict:
+    """Pre-computed supply/demand zone hints for the AI (M5 + H1 + session levels)."""
+    m5_atr = atr(m5, 14)
+    h1_atr = atr(h1, 14) if h1 else m5_atr
+    pd_ = levels["previous_day"]
+    td = levels["today"]
+    demand: List[Dict] = []
+    supply: List[Dict] = []
+
+    def add_d(val, reason):
+        if val is not None and float(val) < price:
+            demand.append(_price_zone(float(val), m5_atr, reason))
+
+    def add_s(val, reason):
+        if val is not None and float(val) > price:
+            supply.append(_price_zone(float(val), m5_atr, reason))
+
+    add_d(pd_.get("low"), "previous day low / demand")
+    add_d(td.get("asian_session_low"), "Asian session low / liquidity (LQ)")
+    add_d(td.get("current_day_low"), "intraday low / demand")
+    add_s(pd_.get("high"), "previous day high / supply")
+    add_s(td.get("asian_session_high"), "Asian session high / liquidity")
+    add_s(td.get("current_day_high"), "intraday high / supply")
+
+    m5_hi, m5_lo = _swing_highs_lows(m5)
+    h1_hi, h1_lo = _swing_highs_lows(h1)
+    for v in m5_lo[-4:]:
+        if v < price:
+            demand.append(_price_zone(v, m5_atr, "M5 swing low / demand"))
+    for v in m5_hi[-4:]:
+        if v > price:
+            supply.append(_price_zone(v, m5_atr, "M5 swing high / supply"))
+    for v in h1_lo[-3:]:
+        if v < price:
+            demand.append(_price_zone(v, h1_atr, "H1 demand / structure low"))
+    for v in h1_hi[-3:]:
+        if v > price:
+            supply.append(_price_zone(v, h1_atr, "H1 supply / structure high"))
+
+    demand = _dedupe_zones(demand, price)
+    supply = _dedupe_zones(supply, price)
+    demand.sort(key=lambda z: z["high"], reverse=True)
+    supply.sort(key=lambda z: z["low"])
+    return {
+        "demand": demand[:3],
+        "supply": supply[:3],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -228,11 +308,15 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
     if len(candles) < 50:
         raise MarketDataError(f"Insufficient {tf_label} candles ({len(candles)})")
     h1 = get_candles(H1, limit=250, symbol=symbol)
+    if len(h1) < 50:
+        raise MarketDataError(f"Insufficient H1 candles ({len(h1)})")
 
     closes = [c["close"] for c in candles]
     h1_closes = [c["close"] for c in h1]
     levels = _session_levels(candles)
     current_price = round(float(candles[-1]["close"]), 2)
+    h1_hi, h1_lo = _swing_highs_lows(h1)
+    zones = _zone_hints(m5=candles, h1=h1, levels=levels, price=current_price)
 
     def _r(x):
         return round(float(x), 2) if x is not None else None
@@ -240,27 +324,36 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
     snapshot = {
         "instrument": symbol,
         "timestamp_sgt": datetime.now(config.tz).strftime("%Y-%m-%d %H:%M:%S"),
+        "execution_timeframe": "M5",
+        "bias_timeframe": "H1",
         "screenshot_timeframe": tf_label,
         "candles_in_screenshot": int(len(candles)),
         "current_price": current_price,
-        "spread": None,  # not provided by FMP candles; populated later from broker feed
+        "spread": None,
         "previous_day": levels["previous_day"],
         "today": levels["today"],
+        "h1_structure": {
+            "trend": _h1_trend(h1),
+            "structure_high": h1_hi[-1] if h1_hi else None,
+            "structure_low": h1_lo[-1] if h1_lo else None,
+        },
+        "zone_hints": zones,
         "indicators": {
-            "ema20": _r(ema(closes, 20)),
-            "ema50": _r(ema(closes, 50)),
-            "ema200": _r(ema(closes, 200)) if len(candles) >= 200 else None,
-            "atr14": _r(atr(candles, 14)),
+            "m5_ema20": _r(ema(closes, 20)),
+            "m5_ema50": _r(ema(closes, 50)),
+            "m5_ema200": _r(ema(closes, 200)) if len(candles) >= 200 else None,
+            "m5_atr14": _r(atr(candles, 14)),
             "h1_ema50": _r(ema(h1_closes, 50)) if len(h1) >= 50 else None,
             "h1_ema200": _r(ema(h1_closes, 200)) if len(h1) >= 200 else None,
-            "h4_trend": _h4_trend(symbol),
+            "h1_trend": _h1_trend(h1),
         },
         "upcoming_usd_news": upcoming_usd_news or [],
-        "_candles": candles,  # kept in-memory for swing-level detection; not serialized to DB
+        "_candles": candles,
+        "_h1_candles": h1,
     }
-    log.info("Snapshot built (%s): price=%s ema20=%s ema50=%s h4=%s",
-             tf_label, current_price, snapshot["indicators"]["ema20"],
-             snapshot["indicators"]["ema50"], snapshot["indicators"]["h4_trend"])
+    log.info("Snapshot built (M5/H1): price=%s h1=%s demand=%d supply=%d",
+             current_price, snapshot["h1_structure"]["trend"],
+             len(zones["demand"]), len(zones["supply"]))
     return snapshot
 
 

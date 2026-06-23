@@ -94,7 +94,11 @@ def render(snapshot: Dict) -> Optional[str]:
         log.warning("CHARTIMG_API_KEY not set — chart skipped (text plan still sent)")
         return None
     if config.chartimg_layout_id:
+        log.info("Chart: TradingView layout %s @ %s (your saved setup)",
+                 config.chartimg_layout_id, _interval())
         return _render_layout()
+    if config.intraday_tf != "5min":
+        log.warning("INTRADAY_TF=%s — member chart spec is M5; set INTRADAY_TF=5min", config.intraday_tf)
     return _render_advanced(snapshot)
 
 

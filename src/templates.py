@@ -204,6 +204,77 @@ def intraday_plan(
     )
 
 
+def _fmt_price(x) -> str:
+    """Trim a price to a clean int if whole, else 2dp (e.g. 4110, 4115.74)."""
+    try:
+        f = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    return str(int(round(f))) if abs(f - round(f)) < 0.005 else f"{f:.2f}"
+
+
+def _fmt_zone(low, high) -> str:
+    """Render a price zone as a range, e.g. '4110-4118'."""
+    lo, hi = float(low), float(high)
+    if lo > hi:
+        lo, hi = hi, lo
+    return f"{_fmt_price(lo)}-{_fmt_price(hi)}"
+
+
+def intraday_plan_ai(
+    *,
+    date_sgt: str,
+    h1_bias: str,
+    h1_context: str,
+    demand_zones: List[dict],
+    supply_zones: List[dict],
+    gameplans: List[dict],
+    news_summary: str,
+) -> str:
+    """XAU/USD (M5) Analysis — member format: zones as ranges + numbered Gameplan."""
+
+    def _zone_line(z: dict) -> str:
+        label = str(z.get("label") or z.get("reason") or "").strip()
+        rng = _fmt_zone(z["low"], z["high"])
+        return f"• {rng} — {label}" if label else f"• {rng}"
+
+    def _zones(zones: List[dict]) -> str:
+        if not zones:
+            return "—"
+        return "\n".join(_zone_line(z) for z in zones[:4])
+
+    def _gameplan_lines(plans: List[dict]) -> str:
+        if not plans:
+            return "—"
+        lines = []
+        for i, gp in enumerate(plans[:5], 1):
+            text = str(gp.get("text") or "").strip()
+            if not text:
+                # Legacy structured game plan -> single prose line
+                zone = _fmt_zone(gp.get("zone_low", 0), gp.get("zone_high", 0))
+                title = str(gp.get("title", "Setup")).strip()
+                text = (
+                    f"{title} at {zone}. {gp.get('trigger', '')} "
+                    f"Target: {gp.get('target', '')} Invalidation: {gp.get('invalidation', '')}"
+                ).strip()
+            lines.append(f"{i}. {text}")
+        return "\n".join(lines)
+
+    return (
+        f"XAU/USD (M5) Analysis — {date_sgt} SGT\n\n"
+        f"H1 bias: {h1_bias.strip().capitalize()}\n"
+        f"{h1_context.strip()}\n\n"
+        "Demand zones (support):\n"
+        f"{_zones(demand_zones)}\n\n"
+        "Supply zones (resistance):\n"
+        f"{_zones(supply_zones)}\n\n"
+        "Gameplan:\n"
+        f"{_gameplan_lines(gameplans)}\n\n"
+        f"USD news risk: {news_summary.strip()}\n\n"
+        f"— {BRAND}"
+    )
+
+
 # ----------------------------------------------------------------------------
 # Admin / error
 # ----------------------------------------------------------------------------
