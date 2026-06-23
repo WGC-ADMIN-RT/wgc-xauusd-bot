@@ -68,22 +68,20 @@ def daily_outlook(date_sgt: str, events: Sequence[dict]) -> str:
         "",
         "Today's tracked USD events for XAUUSD:",
     ]
-    # Forex-Factory style: one time header, the same-time events listed under it.
     for group in _group_by_time(events):
-        lines.append("")
-        lines.append(f"{group[0]['time_sgt']} — USD")
         for ev in group:
-            lines.append(
-                f"{impact_emoji(ev['impact'])} {ev['event_name']} "
-                f"(Forecast: {_fmt(ev.get('forecast'))} | Previous: {_fmt(ev.get('previous'))})"
-            )
+            lines += [
+                "",
+                f"{ev['time_sgt']} — {impact_emoji(ev['impact'])} {ev['event_name']}",
+                f"Forecast: {_fmt(ev.get('forecast'))}",
+                f"Previous: {_fmt(ev.get('previous'))}",
+                f"XAUUSD note: {ev.get('short_reason', '')}",
+            ]
     lines += [
         "",
         "Risk reminder:",
         "High-impact news can cause spread widening, slippage, fake breakouts, and "
-        "fast reversals. Signals will pause near major releases.",
-        "",
-        f"— {BRAND}",
+        "fast reversals. Signal automation will pause near major releases.",
     ]
     return "\n".join(lines)
 
@@ -93,8 +91,7 @@ def daily_outlook_no_events(date_sgt: str) -> str:
         f"🗞 USD News Outlook — {date_sgt} SGT\n\n"
         "No medium or high-impact USD news scheduled in the next 24 hours.\n\n"
         "XAUUSD automation will focus mainly on technical intraday structure unless "
-        "unscheduled USD headlines appear.\n\n"
-        f"— {BRAND}"
+        "unscheduled USD headlines appear."
     )
 
 
