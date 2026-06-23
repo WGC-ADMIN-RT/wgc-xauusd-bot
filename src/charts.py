@@ -73,18 +73,26 @@ def render(snapshot: Dict) -> Optional[str]:
         log.warning("CHARTIMG_API_KEY not set — chart skipped (text plan still sent)")
         return None
 
+    # Chart-IMG counts studies + drawings against one cap (free tier = 3). Prioritise
+    # the EMAs (core indicators; S/R levels are also listed in the text plan), then fill
+    # remaining budget with level lines.
+    studies = [
+        {"name": "Moving Average Exponential", "input": {"length": 20}},
+        {"name": "Moving Average Exponential", "input": {"length": 50}},
+        {"name": "Moving Average Exponential", "input": {"length": 200}},
+    ]
+    budget = max(0, config.chartimg_max_params)
+    studies = studies[:budget]
+    drawings = _drawings(snapshot)[:max(0, budget - len(studies))]
+
     payload = {
         "symbol": config.chartimg_symbol,
         "interval": _interval(),
         "theme": "dark",
         "width": config.chartimg_width,
         "height": config.chartimg_height,
-        "studies": [
-            {"name": "Moving Average Exponential", "input": {"length": 20}},
-            {"name": "Moving Average Exponential", "input": {"length": 50}},
-            {"name": "Moving Average Exponential", "input": {"length": 200}},
-        ],
-        "drawings": _drawings(snapshot),
+        "studies": studies,
+        "drawings": drawings,
     }
 
     try:

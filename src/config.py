@@ -50,8 +50,11 @@ class Config:
     chart_provider: str = field(default_factory=lambda: _get("CHART_PROVIDER", "chartimg"))
     chartimg_api_key: str = field(default_factory=lambda: _get("CHARTIMG_API_KEY"))
     chartimg_symbol: str = field(default_factory=lambda: _get("CHARTIMG_SYMBOL", "OANDA:XAUUSD"))
-    chartimg_width: int = field(default_factory=lambda: _get_int("CHARTIMG_WIDTH", 1000))
+    chartimg_width: int = field(default_factory=lambda: _get_int("CHARTIMG_WIDTH", 800))
     chartimg_height: int = field(default_factory=lambda: _get_int("CHARTIMG_HEIGHT", 600))
+    # Chart-IMG free tier caps total studies+drawings at 3 (and resolution at 800x600).
+    # Raise via env if you upgrade the plan (e.g. 8 -> 3 EMAs + 5 level lines).
+    chartimg_max_params: int = field(default_factory=lambda: _get_int("CHARTIMG_MAX_PARAMS", 3))
 
     # Operational
     timezone_name: str = field(default_factory=lambda: _get("TIMEZONE", "Asia/Singapore"))
