@@ -67,12 +67,63 @@ def _drawings(snapshot: Dict) -> List[Dict]:
     return drawings
 
 
+def _save_png(resp, label: str) -> Optional[str]:
+    """Validate a Chart-IMG response and save the PNG. Returns path or None."""
+    ctype = resp.headers.get("content-type", "")
+    if resp.status_code != 200 or not ctype.startswith("image"):
+        body = resp.text[:300] if not ctype.startswith("image") else "<image>"
+        log.warning("Chart-IMG error %s (%s): %s", resp.status_code, label, body)
+        return None
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    stamp = datetime.now(config.tz).strftime("%Y%m%d_%H%M")
+    out_path = os.path.join(OUTPUT_DIR, f"{config.instrument}_{config.intraday_tf_label}_{stamp}.png")
+    with open(out_path, "wb") as fh:
+        fh.write(resp.content)
+    log.info("Chart-IMG saved: %s (%s)", out_path, label)
+    return out_path
+
+
 def render(snapshot: Dict) -> Optional[str]:
-    """Render the TradingView chart via Chart-IMG. Returns the PNG path, or None."""
+    """Render the TradingView chart via Chart-IMG. Returns the PNG path, or None.
+
+    If CHARTIMG_LAYOUT_ID is set, render YOUR saved TradingView layout (your own
+    indicators/drawings/style); otherwise render a generic advanced chart with our
+    EMA studies + level lines.
+    """
     if not config.chartimg_api_key:
         log.warning("CHARTIMG_API_KEY not set — chart skipped (text plan still sent)")
         return None
+    if config.chartimg_layout_id:
+        return _render_layout()
+    return _render_advanced(snapshot)
 
+
+def _render_layout() -> Optional[str]:
+    """Render the user's saved TradingView layout via Chart-IMG layout-chart."""
+    url = f"https://api.chart-img.com/v2/tradingview/layout-chart/{config.chartimg_layout_id}"
+    headers = {"x-api-key": config.chartimg_api_key, "content-type": "application/json"}
+    # Private layouts / invite-only indicators need the TradingView session cookies.
+    if config.chartimg_tv_session:
+        headers["tradingview-session-id"] = config.chartimg_tv_session
+    if config.chartimg_tv_session_sign:
+        headers["tradingview-session-id-sign"] = config.chartimg_tv_session_sign
+    # The layout carries its own studies/drawings; we only set symbol/interval/size.
+    payload = {
+        "symbol": config.chartimg_symbol,
+        "interval": _interval(),
+        "width": config.chartimg_width,
+        "height": config.chartimg_height,
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    except requests.RequestException as exc:
+        log.warning("Chart-IMG layout request failed: %s", exc)
+        return None
+    return _save_png(resp, f"layout {config.chartimg_layout_id} {_interval()}")
+
+
+def _render_advanced(snapshot: Dict) -> Optional[str]:
+    """Generic advanced chart: our EMA studies + key level lines."""
     # Chart-IMG counts studies + drawings against one cap (free tier = 3). Prioritise
     # the EMAs (core indicators; S/R levels are also listed in the text plan), then fill
     # remaining budget with level lines.
@@ -94,7 +145,6 @@ def render(snapshot: Dict) -> Optional[str]:
         "studies": studies,
         "drawings": drawings,
     }
-
     try:
         resp = requests.post(
             CHARTIMG_URL,
@@ -105,18 +155,4 @@ def render(snapshot: Dict) -> Optional[str]:
     except requests.RequestException as exc:
         log.warning("Chart-IMG request failed: %s", exc)
         return None
-
-    ctype = resp.headers.get("content-type", "")
-    if resp.status_code != 200 or not ctype.startswith("image"):
-        body = resp.text[:300] if not ctype.startswith("image") else "<image>"
-        log.warning("Chart-IMG error %s (%s): %s", resp.status_code, config.chartimg_symbol, body)
-        return None
-
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    stamp = datetime.now(config.tz).strftime("%Y%m%d_%H%M")
-    out_path = os.path.join(OUTPUT_DIR, f"{config.instrument}_{config.intraday_tf_label}_{stamp}.png")
-    with open(out_path, "wb") as fh:
-        fh.write(resp.content)
-    log.info("Chart-IMG saved: %s (%s %s, %d levels)",
-             out_path, config.chartimg_symbol, _interval(), len(payload["drawings"]))
-    return out_path
+    return _save_png(resp, f"{config.chartimg_symbol} {_interval()}, {len(drawings)} levels")

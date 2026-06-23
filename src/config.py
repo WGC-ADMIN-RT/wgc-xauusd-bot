@@ -55,6 +55,13 @@ class Config:
     # Chart-IMG free tier caps total studies+drawings at 3 (and resolution at 800x600).
     # Raise via env if you upgrade the plan (e.g. 8 -> 3 EMAs + 5 level lines).
     chartimg_max_params: int = field(default_factory=lambda: _get_int("CHARTIMG_MAX_PARAMS", 3))
+    # Render from YOUR TradingView account's saved layout (your indicators/drawings/style)
+    # via Chart-IMG layout-chart. Set the layout id from the chart's share URL. For a
+    # PRIVATE layout / invite-only indicators, also supply your TradingView session
+    # cookies (sensitive — server .env only, never commit, rotate if exposed).
+    chartimg_layout_id: str = field(default_factory=lambda: _get("CHARTIMG_LAYOUT_ID"))
+    chartimg_tv_session: str = field(default_factory=lambda: _get("CHARTIMG_TV_SESSION_ID"))
+    chartimg_tv_session_sign: str = field(default_factory=lambda: _get("CHARTIMG_TV_SESSION_SIGN"))
 
     # Operational
     timezone_name: str = field(default_factory=lambda: _get("TIMEZONE", "Asia/Singapore"))
