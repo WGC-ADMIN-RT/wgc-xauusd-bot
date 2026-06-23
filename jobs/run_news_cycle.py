@@ -33,6 +33,7 @@ ALERT_60_FROM, ALERT_60_TO = 45, 60
 ALERT_15_FROM, ALERT_15_TO = 10, 15
 POSTRELEASE_MAX_AGE = 20
 ACTUAL_GIVEUP_MINUTES = 15
+POSTRELEASE_MIN_AGE = 5  # wait for T+5 M5 close before publishing price reaction
 
 
 def _time_sgt(dt: datetime) -> str:
@@ -99,9 +100,9 @@ def _do_post_release(now_utc):
         age_min = (now_utc - sched).total_seconds() / 60.0
         try:
             actual = calendar_service.fetch_actual(row["event_name"], sched)
-            if actual:
-                _publish_release(row, sched, actual)
-            elif age_min >= ACTUAL_GIVEUP_MINUTES:
+            if actual and age_min >= POSTRELEASE_MIN_AGE:
+                _publish_release(row, sched, actual, now_utc)
+            elif age_min >= ACTUAL_GIVEUP_MINUTES and not actual:
                 telegram_client.send_message(templates.actual_unavailable())
                 db.mark_sent(row["id"], "sent_post_release")
                 log.info("Actual unavailable after %dm for %s", ACTUAL_GIVEUP_MINUTES, row["event_name"])
@@ -110,19 +111,31 @@ def _do_post_release(now_utc):
             log.exception("Post-release handling failed for %s", row["event_name"])
 
 
-def _publish_release(row, sched_utc, actual):
+def _publish_release(row, sched_utc, actual, now_utc):
     pol = polarity.evaluate(row["event_name"], actual, row["forecast"], row["previous"])
-    reaction = market_data.get_price_reaction(sched_utc)
+    reaction = market_data.get_price_reaction(sched_utc, now_utc=now_utc)
+    ref_price = (
+        reaction.get("price_plus_15")
+        or reaction.get("price_plus_5")
+        or reaction.get("current_price")
+    )
+    confirmation = market_data.price_action_confirmation(
+        pol.xau_bias, reaction["price_before"], ref_price
+    )
     impact_summary = f"Initial read: XAUUSD {pol.label}."
     if pol.label == "NEUTRAL":
-        impact_summary += " In line / mixed — wait for price confirmation."
+        impact_summary += " In line / mixed."
     event = {"event_name": news_filter.display_name(row["event_name"]), "actual": actual,
              "forecast": row["forecast"], "previous": row["previous"]}
     reaction_block = {
         "usd_bias_summary": pol.reason,
         "price_before": reaction["price_before"],
+        "price_at_release": reaction["price_at_release"],
+        "price_plus_5": reaction["price_plus_5"],
+        "price_plus_15": reaction["price_plus_15"],
         "current_price": reaction["current_price"],
         "price_change": reaction["price_change"],
+        "price_confirmation": confirmation,
         "xauusd_impact_summary": impact_summary,
         "signal_status": "Signal automation remains paused until the next M5/M15 candle confirms direction.",
     }

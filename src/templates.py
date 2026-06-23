@@ -131,7 +131,8 @@ def warning_15m(event: dict) -> str:
 def post_release(event: dict, reaction: dict) -> str:
     """📊 Post-release Actual vs Forecast/Previous + XAUUSD impact.
 
-    reaction dict: usd_bias_summary, price_before, current_price, price_change,
+    reaction dict: usd_bias_summary, price_before, price_at_release, price_plus_5,
+                   price_plus_15, current_price, price_change, price_confirmation,
                    xauusd_impact_summary, signal_status.
     """
     return (
@@ -143,10 +144,14 @@ def post_release(event: dict, reaction: dict) -> str:
         f"{reaction.get('usd_bias_summary', '')}\n\n"
         "XAUUSD reaction:\n"
         f"Before release: {_fmt(reaction.get('price_before'))}\n"
+        f"At release: {_fmt(reaction.get('price_at_release'))}\n"
+        f"+5 min: {_fmt(reaction.get('price_plus_5'))}\n"
+        f"+15 min: {_fmt(reaction.get('price_plus_15'))}\n"
         f"Current: {_fmt(reaction.get('current_price'))}\n"
-        f"Move: {_fmt(reaction.get('price_change'))}\n\n"
+        f"Move (since before): {_fmt(reaction.get('price_change'))}\n\n"
         "Impact summary:\n"
-        f"{reaction.get('xauusd_impact_summary', '')}\n\n"
+        f"{reaction.get('xauusd_impact_summary', '')}\n"
+        f"{reaction.get('price_confirmation', '')}\n\n"
         "Signal automation:\n"
         f"{reaction.get('signal_status', 'Signal automation remains paused until the next M5/M15 candle confirms direction.')}"
     )

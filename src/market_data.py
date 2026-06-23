@@ -357,23 +357,80 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
     return snapshot
 
 
-def get_price_reaction(release_utc: datetime, symbol: Optional[str] = None) -> Dict:
-    """Price just before the release vs current, for the post-news XAUUSD reaction block."""
+def _close_before(candles: List[dict], target_sgt: datetime) -> Optional[float]:
+    before = [c for c in candles if c["dt_sgt"] < target_sgt]
+    return round(float(before[-1]["close"]), 2) if before else None
+
+
+def _close_at_or_after(candles: List[dict], target_sgt: datetime) -> Optional[float]:
+    at_or_after = [c for c in candles if c["dt_sgt"] >= target_sgt]
+    return round(float(at_or_after[0]["close"]), 2) if at_or_after else None
+
+
+def _move_str(from_price: Optional[float], to_price: Optional[float]) -> str:
+    if from_price is None or to_price is None:
+        return "—"
+    chg = to_price - from_price
+    pct = chg / from_price * 100
+    return f"{chg:+.2f} ({pct:+.2f}%)"
+
+
+def price_action_confirmation(
+    xau_bias: str,
+    price_before: Optional[float],
+    price_ref: Optional[float],
+) -> str:
+    """Whether the move from pre-release to price_ref confirms the XAUUSD data read."""
+    if price_before is None or price_ref is None:
+        return "Price confirmation pending — need more candle data."
+    move = price_ref - price_before
+    if xau_bias == "neutral":
+        return "Mixed/in-line data — wait for a clear M5 confirmation candle."
+    if abs(move) < 0.05:
+        return "Price action is flat so far — wait for confirmation."
+    expected_up = xau_bias == "bullish"
+    if (move > 0 and expected_up) or (move < 0 and not expected_up):
+        return "Price action confirms the data read."
+    return "Price action rejects the data read so far — wait for confirmation."
+
+
+def get_price_reaction(
+    release_utc: datetime,
+    now_utc: Optional[datetime] = None,
+    symbol: Optional[str] = None,
+) -> Dict:
+    """M5 price snapshots around a news release for the post-release Telegram block."""
     symbol = symbol or config.instrument
     release_sgt = release_utc.astimezone(config.tz)
+    now_utc = now_utc or datetime.now(pytz.UTC)
+    now_sgt = now_utc.astimezone(config.tz)
+    empty = {
+        "price_before": None,
+        "price_at_release": None,
+        "price_plus_5": None,
+        "price_plus_15": None,
+        "current_price": None,
+        "price_change": "—",
+    }
     try:
         m5 = get_candles("5min", limit=200, symbol=symbol)
     except Exception as exc:  # MarketDataError or any transient fetch failure
         log.warning("price reaction unavailable: %s", exc)
-        return {"price_before": None, "current_price": None, "price_change": "—"}
+        return empty
 
-    before = [c for c in m5 if c["dt_sgt"] < release_sgt]
-    price_before = round(float(before[-1]["close"]), 2) if before else None
+    t_plus_5 = release_sgt + timedelta(minutes=5)
+    t_plus_15 = release_sgt + timedelta(minutes=15)
+    price_before = _close_before(m5, release_sgt)
+    price_at_release = _close_at_or_after(m5, release_sgt)
+    price_plus_5 = _close_at_or_after(m5, t_plus_5) if now_sgt >= t_plus_5 else None
+    price_plus_15 = _close_at_or_after(m5, t_plus_15) if now_sgt >= t_plus_15 else None
     current = round(float(m5[-1]["close"]), 2)
-    if price_before:
-        chg = current - price_before
-        pct = chg / price_before * 100
-        change_str = f"{chg:+.2f} ({pct:+.2f}%)"
-    else:
-        change_str = "—"
-    return {"price_before": price_before, "current_price": current, "price_change": change_str}
+
+    return {
+        "price_before": price_before,
+        "price_at_release": price_at_release,
+        "price_plus_5": price_plus_5,
+        "price_plus_15": price_plus_15,
+        "current_price": current,
+        "price_change": _move_str(price_before, current),
+    }
