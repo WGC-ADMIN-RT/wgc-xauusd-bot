@@ -41,7 +41,7 @@ _SESSION = requests.Session()
 _SESSION.headers.update({"Accept": "application/json", "User-Agent": "wgc-xauusd-bot/1.0"})
 
 # FMP interval slugs
-M15, H1, H4 = "15min", "1hour", "4hour"
+M15, H1, H4, D1 = "15min", "1hour", "4hour", "1day"
 
 
 class MarketDataError(Exception):
@@ -108,6 +108,15 @@ def get_candles(interval: str, limit: int = 250, symbol: Optional[str] = None) -
     return candles[-limit:]
 
 
+def _safe_candles(interval: str, limit: int, symbol: str) -> List[Dict]:
+    """Best-effort candle fetch — context timeframes must not block the intraday job."""
+    try:
+        return get_candles(interval, limit=limit, symbol=symbol)
+    except Exception as exc:
+        log.warning("Could not fetch %s candles for %s: %s", interval, symbol, exc)
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Pure-Python indicators (match pandas ewm semantics)
 # ---------------------------------------------------------------------------
@@ -165,11 +174,11 @@ def _swing_highs_lows(candles: List[Dict], window: int = 5):
     return highs, lows
 
 
-def _h1_trend(h1_candles: List[Dict]) -> str:
-    """Bullish/bearish/range from H1 close vs EMA50 and its slope."""
-    if len(h1_candles) < 55:
+def _timeframe_trend(candles: List[Dict], min_bars: int = 55) -> str:
+    """Bullish/bearish/range from close vs EMA50 and its slope."""
+    if len(candles) < min_bars:
         return "range"
-    closes = [c["close"] for c in h1_candles]
+    closes = [c["close"] for c in candles]
     e50 = _ema_series(closes, 50)
     last_close = closes[-1]
     last_e, prev_e = e50[-1], e50[-10]
@@ -179,6 +188,31 @@ def _h1_trend(h1_candles: List[Dict]) -> str:
     if last_close < last_e and falling:
         return "bearish"
     return "range"
+
+
+def _h1_trend(h1_candles: List[Dict]) -> str:
+    return _timeframe_trend(h1_candles)
+
+
+def _round_indicator(value: Optional[float]) -> Optional[float]:
+    return round(float(value), 2) if value is not None else None
+
+
+def _indicator_block(candles: List[Dict], prefix: str) -> Dict:
+    """EMA/ATR/trend bundle for a context timeframe (M15/H4/D1)."""
+    if len(candles) < 20:
+        return {f"{prefix}_trend": "range"}
+    closes = [c["close"] for c in candles]
+    block = {f"{prefix}_trend": _timeframe_trend(candles)}
+    if len(candles) >= 20:
+        block[f"{prefix}_ema20"] = _round_indicator(ema(closes, 20))
+    if len(candles) >= 50:
+        block[f"{prefix}_ema50"] = _round_indicator(ema(closes, 50))
+    if len(candles) >= 200:
+        block[f"{prefix}_ema200"] = _round_indicator(ema(closes, 200))
+    if len(candles) >= 14:
+        block[f"{prefix}_atr14"] = _round_indicator(atr(candles, 14))
+    return block
 
 
 def _price_zone(center: float, atr_val: Optional[float], reason: str) -> Dict:
@@ -310,6 +344,9 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
     h1 = get_candles(H1, limit=250, symbol=symbol)
     if len(h1) < 50:
         raise MarketDataError(f"Insufficient H1 candles ({len(h1)})")
+    m15 = _safe_candles(M15, 200, symbol)
+    h4 = _safe_candles(H4, 200, symbol)
+    d1 = _safe_candles(D1, 250, symbol)
 
     closes = [c["close"] for c in candles]
     h1_closes = [c["close"] for c in h1]
@@ -318,42 +355,50 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
     h1_hi, h1_lo = _swing_highs_lows(h1)
     zones = _zone_hints(m5=candles, h1=h1, levels=levels, price=current_price)
 
-    def _r(x):
-        return round(float(x), 2) if x is not None else None
+    indicators = {
+        "m5_ema20": _round_indicator(ema(closes, 20)),
+        "m5_ema50": _round_indicator(ema(closes, 50)),
+        "m5_ema200": _round_indicator(ema(closes, 200)) if len(candles) >= 200 else None,
+        "m5_atr14": _round_indicator(atr(candles, 14)),
+        "h1_ema50": _round_indicator(ema(h1_closes, 50)) if len(h1) >= 50 else None,
+        "h1_ema200": _round_indicator(ema(h1_closes, 200)) if len(h1) >= 200 else None,
+        "h1_trend": _h1_trend(h1),
+    }
+    indicators.update(_indicator_block(m15, "m15"))
+    indicators.update(_indicator_block(h4, "h4"))
+    indicators.update(_indicator_block(d1, "d1"))
 
     snapshot = {
         "instrument": symbol,
         "timestamp_sgt": datetime.now(config.tz).strftime("%Y-%m-%d %H:%M:%S"),
         "execution_timeframe": "M5",
         "bias_timeframe": "H1",
+        "context_timeframes": ["M15", "H1", "H4", "D1"],
         "screenshot_timeframe": tf_label,
         "candles_in_screenshot": int(len(candles)),
         "current_price": current_price,
-        "spread": None,
+        "spread": round(float(config.intraday_spread), 2),
         "previous_day": levels["previous_day"],
         "today": levels["today"],
         "h1_structure": {
-            "trend": _h1_trend(h1),
+            "trend": indicators["h1_trend"],
             "structure_high": h1_hi[-1] if h1_hi else None,
             "structure_low": h1_lo[-1] if h1_lo else None,
         },
         "zone_hints": zones,
-        "indicators": {
-            "m5_ema20": _r(ema(closes, 20)),
-            "m5_ema50": _r(ema(closes, 50)),
-            "m5_ema200": _r(ema(closes, 200)) if len(candles) >= 200 else None,
-            "m5_atr14": _r(atr(candles, 14)),
-            "h1_ema50": _r(ema(h1_closes, 50)) if len(h1) >= 50 else None,
-            "h1_ema200": _r(ema(h1_closes, 200)) if len(h1) >= 200 else None,
-            "h1_trend": _h1_trend(h1),
-        },
+        "indicators": indicators,
         "upcoming_usd_news": upcoming_usd_news or [],
         "_candles": candles,
         "_h1_candles": h1,
     }
-    log.info("Snapshot built (M5/H1): price=%s h1=%s demand=%d supply=%d",
-             current_price, snapshot["h1_structure"]["trend"],
-             len(zones["demand"]), len(zones["supply"]))
+    log.info(
+        "Snapshot built (M5/H1 + M15/H4/D1): price=%s h1=%s m15=%s h4=%s d1=%s",
+        current_price,
+        indicators.get("h1_trend"),
+        indicators.get("m15_trend"),
+        indicators.get("h4_trend"),
+        indicators.get("d1_trend"),
+    )
     return snapshot
 
 

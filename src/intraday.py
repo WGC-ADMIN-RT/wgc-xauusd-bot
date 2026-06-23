@@ -187,16 +187,6 @@ def _invalidation(bias: str, res: List[Dict], sup: List[Dict]) -> str:
     return f"A decisive {tf} close beyond the range extremes changes the plan."
 
 
-def _preferred_plan(bias: str, condition: str) -> str:
-    if condition == "breakout":
-        return "wait for breakout"
-    if bias == "bullish":
-        return "buy dips"
-    if bias == "bearish":
-        return "sell rallies"
-    return "range trade only"
-
-
 def _news_risk(upcoming: List[Dict]) -> Tuple[str, str]:
     """Return (risk_level, summary) from upcoming USD events for the session."""
     if not upcoming:
@@ -210,6 +200,54 @@ def _news_risk(upcoming: List[Dict]) -> Tuple[str, str]:
     summary = "; ".join(parts) + ". Signals will pause around the release." if parts else \
               "No medium or high-impact USD news in the session window."
     return risk, summary
+
+
+def _compute_confidence(snapshot: Dict, bias: str) -> int:
+    """0-100 score from multi-timeframe alignment (PDF plan_json field)."""
+    ind = snapshot.get("indicators") or {}
+    price = snapshot["current_price"]
+    aligned = 0.0
+    total = 0.0
+
+    for key in ("m5_ema20", "m5_ema50"):
+        val = ind.get(key)
+        if val is None:
+            continue
+        total += 1
+        if bias == "bullish" and price > val:
+            aligned += 1
+        elif bias == "bearish" and price < val:
+            aligned += 1
+        elif bias == "range":
+            aligned += 0.5
+
+    for key in ("h1_trend", "m15_trend", "h4_trend", "d1_trend"):
+        trend = ind.get(key)
+        if not trend:
+            continue
+        total += 1
+        if bias == "range":
+            aligned += 1 if trend == "range" else 0.5
+        elif trend == bias:
+            aligned += 1
+
+    score = 50 if total == 0 else int(round(35 + (aligned / total) * 55))
+
+    news = snapshot.get("upcoming_usd_news") or []
+    if any(e.get("impact") == "high" or e.get("is_major") for e in news):
+        score -= 12
+    elif any(e.get("impact") == "medium" for e in news):
+        score -= 6
+
+    return max(30, min(90, score))
+
+
+def _plan_extras(snapshot: Dict, bias: str) -> Dict:
+    return {
+        "market_condition": _market_condition(snapshot, bias),
+        "confidence": _compute_confidence(snapshot, bias),
+        "spread": snapshot.get("spread"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +381,7 @@ def _ai_plan_result(snapshot: Dict, ai: Dict, upcoming_events: List[Dict]) -> Di
         "instrument": snapshot["instrument"],
         "timeframe": "M5",
         "bias_timeframe": "H1",
+        "context_timeframes": snapshot.get("context_timeframes") or ["M15", "H1", "H4", "D1"],
         "engine": "ai",
         "ai_model": config.intraday_ai_model,
         "bias": bias,
@@ -354,6 +393,7 @@ def _ai_plan_result(snapshot: Dict, ai: Dict, upcoming_events: List[Dict]) -> Di
         "preferred_plan": f"H1 {bias} — M5 gameplan",
         "member_message": member_message,
     }
+    result.update(_plan_extras(snapshot, bias))
     log.info("AI intraday plan: h1=%s demand=%d supply=%d gameplans=%d",
              bias, len(demand), len(supply), len(gameplans))
     return result
@@ -400,6 +440,7 @@ def _rule_based_plan(snapshot: Dict, upcoming_events: Optional[List[Dict]] = Non
         "instrument": snapshot["instrument"],
         "timeframe": "M5",
         "bias_timeframe": "H1",
+        "context_timeframes": snapshot.get("context_timeframes") or ["M15", "H1", "H4", "D1"],
         "engine": "rule_based",
         "bias": bias,
         "h1_context": h1_context,
@@ -410,6 +451,7 @@ def _rule_based_plan(snapshot: Dict, upcoming_events: Optional[List[Dict]] = Non
         "preferred_plan": f"H1 {bias} — M5 gameplan",
         "member_message": member_message,
     }
+    result.update(_plan_extras(snapshot, bias))
     log.info("Rule-based gameplan: h1=%s demand=%d supply=%d gameplans=%d",
              bias, len(demand), len(supply), len(gameplans))
     return result

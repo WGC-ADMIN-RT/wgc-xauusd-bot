@@ -17,9 +17,9 @@ def _get(key: str, default: str = "") -> str:
     return os.environ.get(key, default).strip()
 
 
-def _get_int(key: str, default: int) -> int:
+def _get_float(key: str, default: float) -> float:
     try:
-        return int(os.environ.get(key, str(default)))
+        return float(os.environ.get(key, str(default)))
     except (TypeError, ValueError):
         return default
 
@@ -82,6 +82,8 @@ class Config:
     intraday_ai_model: str = field(
         default_factory=lambda: _get("INTRADAY_AI_MODEL", "claude-opus-4-8"))
     intraday_gameplans: int = field(default_factory=lambda: _get_int("INTRADAY_GAMEPLANS", 5))
+    # PDF data-package spread placeholder (points) when no live broker feed is wired.
+    intraday_spread: float = field(default_factory=lambda: _get_float("INTRADAY_SPREAD", 0.0))
 
     # News filter (spec: USD, high + medium impact only)
     news_currency: str = "USD"
