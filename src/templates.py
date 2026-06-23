@@ -86,7 +86,7 @@ def daily_outlook(date_sgt: str, events: Sequence[dict]) -> str:
         "",
         "Risk reminder:",
         "High-impact news can cause spread widening, slippage, fake breakouts, and "
-        "fast reversals. Signal automation will pause near major releases.",
+        "fast reversals. Signals will pause near major releases.",
     ]
     return "\n".join(lines)
 

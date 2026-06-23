@@ -44,7 +44,7 @@ def main() -> None:
             log.warning("Upsert failed for %s", e.event_name)
 
     tdicts = [e.template_dict() for e in events]
-    message = templates.daily_outlook(now_sgt.strftime("%d %b %Y"), tdicts)
+    message = templates.daily_outlook(now_sgt.strftime("%A, %d %b %Y"), tdicts)
     telegram_client.send_message(message)
     db.audit("outlook", "sent", output_json=f"{len(events)} events")
     schedule_guard.mark_done("outlook")
