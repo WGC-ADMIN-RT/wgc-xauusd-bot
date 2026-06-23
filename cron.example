@@ -5,6 +5,7 @@
 # --- Every 5 minutes: daily outlook (fires once at 12:00 PM SGT) ---
 # Minute: */5   Hour: *   Day: *   Month: *   Weekday: *
 cd /home/dyznoaic/wgc-xauusd-bot && flock -n /tmp/wgc-outlook.lock .venv/bin/python jobs/run_outlook.py
+# Root launchers (run_outlook.py etc.) also work if cron omits jobs/.
 
 # --- Every 5 minutes: intraday plan (fires once at 2:30 PM SGT) ---
 cd /home/dyznoaic/wgc-xauusd-bot && flock -n /tmp/wgc-intraday.lock .venv/bin/python jobs/run_intraday.py
