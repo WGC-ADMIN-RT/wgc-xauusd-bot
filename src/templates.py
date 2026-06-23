@@ -74,7 +74,7 @@ def daily_outlook(date_sgt: str, events: Sequence[dict]) -> str:
         for ev in group:
             lines.append(
                 f"{impact_emoji(ev['impact'])} {ev['event_name']} "
-                f"(F: {_fmt(ev.get('forecast'))} | P: {_fmt(ev.get('previous'))})"
+                f"(Forecast: {_fmt(ev.get('forecast'))} | Previous: {_fmt(ev.get('previous'))})"
             )
     lines += [
         "",
