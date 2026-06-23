@@ -116,6 +116,18 @@ def alert_1h(event: dict) -> str:
 
 def warning_15m(event: dict) -> str:
     """🚨 Final warning, 15 minutes before."""
+    impact = (event.get("impact") or "").lower()
+    if impact == "high":
+        automation_note = (
+            "Signal automation:\n"
+            "Paused until after the release and confirmation candle."
+        )
+    else:
+        automation_note = (
+            "Signal automation:\n"
+            "May pause or run with reduced confidence until after the release and "
+            "confirmation candle."
+        )
     return (
         "🚨 Final USD News Warning — 15 Minutes\n\n"
         f"{event['time_sgt']} SGT — {impact_emoji(event['impact'])} {event['event_name']}\n\n"
@@ -123,8 +135,7 @@ def warning_15m(event: dict) -> str:
         f"Previous: {_fmt(event.get('previous'))}\n\n"
         "XAUUSD warning:\n"
         "Spreads and volatility may increase. Avoid chasing candles before the release.\n\n"
-        "Signal automation:\n"
-        "Paused until after the release and confirmation candle."
+        f"{automation_note}"
     )
 
 
