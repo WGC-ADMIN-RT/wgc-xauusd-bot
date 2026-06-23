@@ -45,9 +45,13 @@ class Config:
     # Routing: "wgc_bots" (test/internal) or "public" (members)
     publish_target: str = field(default_factory=lambda: _get("PUBLISH_TARGET", "wgc_bots"))
 
-    # Charts: "self" (free) or "chartimg" (TradingView via Chart-IMG)
-    chart_provider: str = field(default_factory=lambda: _get("CHART_PROVIDER", "self"))
+    # Charts: rendered by Chart-IMG (TradingView). Needs CHARTIMG_API_KEY; without it
+    # the intraday job still publishes the text plan (chart marked unavailable).
+    chart_provider: str = field(default_factory=lambda: _get("CHART_PROVIDER", "chartimg"))
     chartimg_api_key: str = field(default_factory=lambda: _get("CHARTIMG_API_KEY"))
+    chartimg_symbol: str = field(default_factory=lambda: _get("CHARTIMG_SYMBOL", "OANDA:XAUUSD"))
+    chartimg_width: int = field(default_factory=lambda: _get_int("CHARTIMG_WIDTH", 1000))
+    chartimg_height: int = field(default_factory=lambda: _get_int("CHARTIMG_HEIGHT", 600))
 
     # Operational
     timezone_name: str = field(default_factory=lambda: _get("TIMEZONE", "Asia/Singapore"))

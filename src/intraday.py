@@ -28,12 +28,12 @@ _LEVEL_CLUSTER_PCT = 0.0012  # ~0.12%
 # Swing levels
 # ---------------------------------------------------------------------------
 
-def _swings(df, window: int = 5) -> Tuple[List[float], List[float]]:
+def _swings(candles: List[Dict], window: int = 5) -> Tuple[List[float], List[float]]:
     highs: List[float] = []
     lows: List[float] = []
-    h = df["high"].tolist()
-    l = df["low"].tolist()
-    n = len(df)
+    h = [c["high"] for c in candles]
+    l = [c["low"] for c in candles]
+    n = len(candles)
     for i in range(window, n - window):
         seg_h = h[i - window:i + window + 1]
         seg_l = l[i - window:i + window + 1]
@@ -109,7 +109,7 @@ def _levels(snapshot: Dict) -> Tuple[List[Dict], List[Dict]]:
     price = snapshot["current_price"]
     pd_ = snapshot["previous_day"]
     td = snapshot["today"]
-    df = snapshot.get("_candles_df")
+    candles = snapshot.get("_candles")
 
     labeled: List[Tuple[float, str, str]] = []  # (price, reason, side-hint unused)
     def add(val, reason):
@@ -124,8 +124,8 @@ def _levels(snapshot: Dict) -> Tuple[List[Dict], List[Dict]]:
     add(td.get("current_day_low"), "intraday low")
     add(td.get("open"), "current day open")
 
-    if df is not None and len(df) > 12:
-        sh, sl = _swings(df)
+    if candles and len(candles) > 12:
+        sh, sl = _swings(candles)
         for v in sh[-6:]:
             labeled.append((v, "recent swing high / liquidity", ""))
         for v in sl[-6:]:
@@ -254,8 +254,8 @@ def build_plan(snapshot: Dict, upcoming_events: Optional[List[Dict]] = None) -> 
 
 
 def to_db_row(snapshot: Dict, plan: Dict, chart_path: Optional[str]) -> Dict:
-    """Shape an intraday_analyses row (snapshot's in-memory df is stripped)."""
-    raw = {k: v for k, v in snapshot.items() if k != "_candles_df"}
+    """Shape an intraday_analyses row (snapshot's in-memory candles are stripped)."""
+    raw = {k: v for k, v in snapshot.items() if k != "_candles"}
     return {
         "instrument": snapshot["instrument"],
         "analysis_time_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),

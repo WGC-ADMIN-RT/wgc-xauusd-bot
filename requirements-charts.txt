@@ -1,4 +1,3 @@
-# Optional — the self-rendered M15 chart. Heavier; install after core is verified.
-# The bot publishes the text intraday plan even if these are absent.
-matplotlib==3.9.2
-mplfinance==0.12.10b0
+# DEPRECATED — the self-rendered mplfinance chart was removed. Charts are now rendered
+# by Chart-IMG (TradingView) over HTTP; see charts.py. No local chart libs are needed.
+# (File kept so any old deploy step referencing it is a harmless no-op.)

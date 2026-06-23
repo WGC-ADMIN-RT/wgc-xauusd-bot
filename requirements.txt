@@ -1,4 +1,7 @@
-# Core — installs fast/light, gets news + intraday text analysis live.
+# Core â€” all pure-Python wheels; installs fast and cannot break the venv.
+# No numpy/pandas/matplotlib: indicators are computed in plain Python (market_data.py)
+# and the chart is rendered externally by Chart-IMG (charts.py). This host's process
+# cap kept truncating numpy's OpenBLAS backend, so the heavy stack was removed.
 requests==2.32.3
 urllib3<2  # host OpenSSL 1.0.2k: urllib3 v2 needs OpenSSL 1.1.1+; keeps requests importable
 PyMySQL==1.1.1
@@ -6,5 +9,3 @@ cryptography==44.0.0
 pytz==2024.2
 python-dateutil==2.9.0.post0
 tenacity==9.0.0
-numpy==1.26.4
-pandas==2.2.3

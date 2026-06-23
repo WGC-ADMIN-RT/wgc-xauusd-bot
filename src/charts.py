@@ -1,33 +1,45 @@
-"""Chart Renderer — 200-candle intraday XAU/USD chart (timeframe from config) with EMAs and key levels.
+"""Chart Renderer — TradingView chart via Chart-IMG.
 
-Default provider is "self" (free, rendered with mplfinance). A "chartimg" provider
-(TradingView via Chart-IMG) can be slotted in later behind the same `render()` call.
+The intraday chart is rendered by Chart-IMG (https://chart-img.com), which produces a
+real TradingView chart server-side and returns a PNG. We send the symbol, timeframe,
+EMA 20/50/200 studies, and the key support/resistance levels as horizontal-line
+drawings. Chart-IMG fetches its own TradingView price data, so this needs no local
+candles (and no numpy/pandas/matplotlib — that stack is removed from this project).
+
+Requires CHARTIMG_API_KEY. A Chart-IMG paid tier is needed for studies + drawings +
+larger sizes; link your TradingView Premium in the Chart-IMG dashboard to use your own
+layouts/indicators. If the key is absent or the request fails, render() returns None and
+the intraday job still publishes the text plan (chart marked unavailable).
 """
 from __future__ import annotations
 
 import logging
 import os
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
-import pandas as pd
+import requests
 
 from config import config
-
-# matplotlib/mplfinance are imported lazily inside the renderer so the bot still
-# runs (news + text analysis) on a host where the heavy chart libs aren't installed.
 
 log = logging.getLogger("charts")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "charts_out")
 
-_LEVEL_STYLE = {
-    "previous_day.high": ("#c0392b", "Prev Day High"),
-    "previous_day.low": ("#27ae60", "Prev Day Low"),
-    "today.asian_session_high": ("#e67e22", "Asian High"),
-    "today.asian_session_low": ("#2980b9", "Asian Low"),
-    "today.open": ("#7f8c8d", "Day Open"),
-}
+CHARTIMG_URL = "https://api.chart-img.com/v2/tradingview/advanced-chart"
+
+# FMP timeframe slug -> Chart-IMG / TradingView interval.
+_INTERVAL_MAP = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m",
+                 "1hour": "1h", "4hour": "4h", "1day": "1D"}
+
+# Snapshot level -> (TradingView line color, label).
+_LEVELS = [
+    ("previous_day.high", "#c0392b", "Prev Day High"),
+    ("previous_day.low", "#27ae60", "Prev Day Low"),
+    ("today.asian_session_high", "#e67e22", "Asian High"),
+    ("today.asian_session_low", "#2980b9", "Asian Low"),
+    ("today.open", "#7f8c8d", "Day Open"),
+]
 
 
 def _dig(snapshot: Dict, dotted: str):
@@ -37,90 +49,66 @@ def _dig(snapshot: Dict, dotted: str):
     return cur
 
 
-def _pretty_dt(dt: datetime) -> str:
-    """Human-friendly stamp, e.g. '21st June 2026, 2:30 PM'."""
-    day = dt.day
-    suffix = "th" if 11 <= day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
-    # %I/%p are zero-padded/locale-dependent on some libc builds — normalise by hand.
-    hour12 = dt.hour % 12 or 12
-    ampm = "AM" if dt.hour < 12 else "PM"
-    return f"{day}{suffix} {dt.strftime('%B %Y')}, {hour12}:{dt.strftime('%M')} {ampm}"
+def _interval() -> str:
+    return _INTERVAL_MAP.get(config.intraday_tf, "5m")
+
+
+def _drawings(snapshot: Dict) -> List[Dict]:
+    drawings = []
+    for key, color, label in _LEVELS:
+        val = _dig(snapshot, key)
+        if val is not None:
+            drawings.append({
+                "name": "Horizontal Line",
+                "input": {"price": float(val)},
+                "options": {"text": label, "lineColor": color, "textColor": color,
+                            "showPrice": True},
+            })
+    return drawings
 
 
 def render(snapshot: Dict) -> Optional[str]:
-    """Render the chart from a market_data snapshot. Returns the PNG path (or None)."""
-    if config.chart_provider == "chartimg":
-        return _render_chartimg(snapshot)
-    return _render_self(snapshot)
+    """Render the TradingView chart via Chart-IMG. Returns the PNG path, or None."""
+    if not config.chartimg_api_key:
+        log.warning("CHARTIMG_API_KEY not set — chart skipped (text plan still sent)")
+        return None
 
+    payload = {
+        "symbol": config.chartimg_symbol,
+        "interval": _interval(),
+        "theme": "dark",
+        "width": config.chartimg_width,
+        "height": config.chartimg_height,
+        "studies": [
+            {"name": "Moving Average Exponential", "input": {"length": 20}},
+            {"name": "Moving Average Exponential", "input": {"length": 50}},
+            {"name": "Moving Average Exponential", "input": {"length": 200}},
+        ],
+        "drawings": _drawings(snapshot),
+    }
 
-def _render_self(snapshot: Dict) -> Optional[str]:
     try:
-        import matplotlib
-        matplotlib.use("Agg")  # headless server rendering
-        import mplfinance as mpf
-    except ImportError:
-        log.warning("matplotlib/mplfinance not installed — skipping chart (text plan still sent)")
+        resp = requests.post(
+            CHARTIMG_URL,
+            headers={"x-api-key": config.chartimg_api_key, "content-type": "application/json"},
+            json=payload,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        log.warning("Chart-IMG request failed: %s", exc)
         return None
 
-    df = snapshot.get("_candles_df")
-    if df is None or len(df) == 0:
-        log.error("No candle dataframe in snapshot — cannot render chart")
+    ctype = resp.headers.get("content-type", "")
+    if resp.status_code != 200 or not ctype.startswith("image"):
+        body = resp.text[:300] if not ctype.startswith("image") else "<image>"
+        log.warning("Chart-IMG error %s (%s): %s", resp.status_code, config.chartimg_symbol, body)
         return None
-    tf_label = config.intraday_tf_label
-
-    plot_df = df[["open", "high", "low", "close", "volume"]].copy()
-    plot_df.columns = ["Open", "High", "Low", "Close", "Volume"]
-    plot_df.index = pd.DatetimeIndex(plot_df.index).tz_localize(None)  # mplfinance wants tz-naive
-
-    close = plot_df["Close"]
-    addplots = [
-        mpf.make_addplot(close.ewm(span=20, adjust=False).mean(), color="#2980b9", width=1.0),
-        mpf.make_addplot(close.ewm(span=50, adjust=False).mean(), color="#e67e22", width=1.0),
-    ]
-    if len(plot_df) >= 200:
-        addplots.append(mpf.make_addplot(close.ewm(span=200, adjust=False).mean(), color="#8e44ad", width=1.2))
-
-    hlines, colors = [], []
-    for key, (color, _label) in _LEVEL_STYLE.items():
-        val = _dig(snapshot, key)
-        if val is not None:
-            hlines.append(val)
-            colors.append(color)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    now = datetime.now(config.tz)
-    stamp = now.strftime("%Y%m%d_%H%M")  # filename-safe
-    out_path = os.path.join(OUTPUT_DIR, f"{config.instrument}_{tf_label}_{stamp}.png")
-
-    title = f"\n{config.instrument}  {tf_label} — last {len(plot_df)} candles\n{_pretty_dt(now)} SGT"
-    style = mpf.make_mpf_style(base_mpf_style="charles", rc={"font.size": 9})
-
-    try:
-        mpf.plot(
-            plot_df,
-            type="candle",
-            style=style,
-            addplot=addplots,
-            hlines=dict(hlines=hlines, colors=colors, linestyle="--", linewidths=0.9) if hlines else None,
-            volume=True,
-            figratio=(16, 9),
-            figscale=1.2,
-            tight_layout=True,
-            title=title,
-            xlabel="Time (SGT)",
-            savefig=dict(fname=out_path, dpi=130, bbox_inches="tight"),
-        )
-    except Exception as exc:  # rendering must never crash the analysis job
-        log.exception("Chart render failed: %s", exc)
-        return None
-
-    log.info("Chart saved: %s (EMA20/50%s + %d levels)",
-             out_path, "/200" if len(plot_df) >= 200 else "", len(hlines))
+    stamp = datetime.now(config.tz).strftime("%Y%m%d_%H%M")
+    out_path = os.path.join(OUTPUT_DIR, f"{config.instrument}_{config.intraday_tf_label}_{stamp}.png")
+    with open(out_path, "wb") as fh:
+        fh.write(resp.content)
+    log.info("Chart-IMG saved: %s (%s %s, %d levels)",
+             out_path, config.chartimg_symbol, _interval(), len(payload["drawings"]))
     return out_path
-
-
-def _render_chartimg(snapshot: Dict) -> Optional[str]:
-    """Placeholder for TradingView screenshots via Chart-IMG (paid). Wired later."""
-    log.warning("CHART_PROVIDER=chartimg not yet implemented — falling back to self-render")
-    return _render_self(snapshot)

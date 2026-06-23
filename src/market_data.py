@@ -4,12 +4,21 @@ Pulls intraday candles from FMP (`/stable/historical-chart/<interval>`), compute
 EMA 20/50/200, ATR(14), and derives previous-day / Asian-session / current-day levels
 in SGT. Produces the structured snapshot the intraday analysis (Task 2) consumes.
 
+PURE PYTHON — no numpy/pandas. This host (shared cPanel, RLIMIT_NPROC ~1400) cannot
+keep numpy's OpenBLAS backend alive: the import spawns a thread burst that trips the
+process cap and truncates the on-disk package. So indicators are computed with plain
+Python here, and the chart is rendered externally via Chart-IMG (TradingView). The
+math matches the previous pandas implementation exactly:
+  * EMA  = ewm(span=period, adjust=False)  -> alpha = 2/(period+1), seeded at series[0]
+  * ATR  = Wilder ewm(alpha=1/period, adjust=False) over True Range, seeded at tr[0]
+
 Timezone note: FMP intraday timestamps for forex are treated as UTC (FMP_CHART_TZ) and
-converted to SGT for session logic. Verify against a known candle on the first live pull.
+converted to SGT for session logic.
 """
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -18,14 +27,6 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from config import config
-
-# NOTE: pandas/numpy are imported LAZILY inside the functions that need them, not at
-# module top. On this shared cPanel account (RLIMIT_NPROC ~1400) the every-minute
-# news cron imports this module constantly; importing numpy that often under the
-# process cap kept truncating the install ("numpy.lib.utils missing"). With lazy
-# imports, numpy is only loaded by the once-daily intraday snapshot and by an actual
-# post-release price reaction — and `from __future__ import annotations` keeps the
-# `pd.DataFrame` type hints valid without importing pandas at module load.
 
 log = logging.getLogger("market_data")
 
@@ -46,6 +47,10 @@ M15, H1, H4 = "15min", "1hour", "4hour"
 class MarketDataError(Exception):
     pass
 
+
+# ---------------------------------------------------------------------------
+# Fetch + parse
+# ---------------------------------------------------------------------------
 
 @retry(
     retry=retry_if_exception_type((requests.RequestException, MarketDataError)),
@@ -70,86 +75,150 @@ def _request(interval: str, symbol: str, limit: int) -> List[dict]:
     return data
 
 
-def get_candles(interval: str, limit: int = 250, symbol: Optional[str] = None) -> pd.DataFrame:
-    """Return an OHLCV DataFrame indexed by SGT datetime, oldest→newest, trimmed to `limit`."""
-    import pandas as pd  # lazy: keeps numpy out of the every-minute news import path
+def _parse_candles(raw: List[dict]) -> List[Dict]:
+    """FMP rows -> list of candle dicts, oldest→newest, with SGT/UTC datetimes."""
+    out: List[Dict] = []
+    for r in raw:
+        try:
+            dt = datetime.strptime(str(r["date"]).strip(), "%Y-%m-%d %H:%M:%S")
+        except (KeyError, ValueError, TypeError):
+            continue
+        dt_utc = FMP_CHART_TZ.localize(dt)
+        try:
+            o, h, l, c = float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        try:
+            vol = float(r.get("volume") or 0)
+        except (TypeError, ValueError):
+            vol = 0.0
+        out.append({
+            "dt_utc": dt_utc,
+            "dt_sgt": dt_utc.astimezone(config.tz),
+            "open": o, "high": h, "low": l, "close": c, "volume": vol,
+        })
+    out.sort(key=lambda x: x["dt_utc"])
+    return out
+
+
+def get_candles(interval: str, limit: int = 250, symbol: Optional[str] = None) -> List[Dict]:
+    """Return up to `limit` most-recent candle dicts, oldest→newest."""
     symbol = symbol or config.instrument
-    raw = _request(interval, symbol, limit)
-    df = pd.DataFrame(raw)
-    df["dt_utc"] = pd.to_datetime(df["date"]).dt.tz_localize(FMP_CHART_TZ)
-    df["dt_sgt"] = df["dt_utc"].dt.tz_convert(config.tz)
-    df = df.rename(columns=str.lower)[["dt_utc", "dt_sgt", "open", "high", "low", "close", "volume"]]
-    for col in ("open", "high", "low", "close", "volume"):
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.dropna(subset=["open", "high", "low", "close"]).sort_values("dt_utc")
-    df = df.set_index("dt_sgt")
-    return df.tail(limit)
+    candles = _parse_candles(_request(interval, symbol, limit))
+    return candles[-limit:]
 
 
-def ema(series: pd.Series, period: int) -> float:
-    return float(series.ewm(span=period, adjust=False).mean().iloc[-1])
+# ---------------------------------------------------------------------------
+# Pure-Python indicators (match pandas ewm semantics)
+# ---------------------------------------------------------------------------
+
+def _ema_series(values: List[float], period: int) -> List[float]:
+    """ewm(span=period, adjust=False) series. alpha=2/(period+1), seeded at values[0]."""
+    if not values:
+        return []
+    k = 2.0 / (period + 1)
+    out = [values[0]]
+    for v in values[1:]:
+        out.append(v * k + out[-1] * (1 - k))
+    return out
 
 
-def atr(df: pd.DataFrame, period: int = 14) -> float:
-    import pandas as pd  # lazy (see module note)
-    high, low, close = df["high"], df["low"], df["close"]
-    prev_close = close.shift(1)
-    tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
-    # Wilder smoothing
-    return float(tr.ewm(alpha=1 / period, adjust=False).mean().iloc[-1])
+def ema(values: List[float], period: int) -> Optional[float]:
+    s = _ema_series(values, period)
+    return s[-1] if s else None
+
+
+def atr(candles: List[Dict], period: int = 14) -> Optional[float]:
+    """Wilder ATR: ewm(alpha=1/period, adjust=False) over True Range, seeded at tr[0]."""
+    if not candles:
+        return None
+    trs: List[float] = []
+    prev_close: Optional[float] = None
+    for c in candles:
+        if prev_close is None:
+            tr = c["high"] - c["low"]
+        else:
+            tr = max(c["high"] - c["low"], abs(c["high"] - prev_close), abs(c["low"] - prev_close))
+        trs.append(tr)
+        prev_close = c["close"]
+    alpha = 1.0 / period
+    a = trs[0]
+    for tr in trs[1:]:
+        a = tr * alpha + a * (1 - alpha)
+    return a
 
 
 def _h4_trend(symbol: str) -> str:
     """Bullish/bearish/range from H4 close vs EMA50 and its slope."""
     try:
         h4 = get_candles(H4, limit=120, symbol=symbol)
-        if len(h4) < 55:
-            return "range"
-        e50 = h4["close"].ewm(span=50, adjust=False).mean()
-        last_close = float(h4["close"].iloc[-1])
-        last_e, prev_e = float(e50.iloc[-1]), float(e50.iloc[-10])
-        rising, falling = last_e > prev_e, last_e < prev_e
-        if last_close > last_e and rising:
-            return "bullish"
-        if last_close < last_e and falling:
-            return "bearish"
-        return "range"
     except MarketDataError:
         return "range"
+    if len(h4) < 55:
+        return "range"
+    closes = [c["close"] for c in h4]
+    e50 = _ema_series(closes, 50)
+    last_close = closes[-1]
+    last_e, prev_e = e50[-1], e50[-10]
+    rising, falling = last_e > prev_e, last_e < prev_e
+    if last_close > last_e and rising:
+        return "bullish"
+    if last_close < last_e and falling:
+        return "bearish"
+    return "range"
 
 
-def _session_levels(m15: pd.DataFrame) -> Dict:
+# ---------------------------------------------------------------------------
+# Session levels (SGT)
+# ---------------------------------------------------------------------------
+
+def _hl(candles: List[Dict], field: str) -> Optional[float]:
+    if not candles:
+        return None
+    if field == "high":
+        val = max(c["high"] for c in candles)
+    elif field == "low":
+        val = min(c["low"] for c in candles)
+    elif field == "close":
+        val = candles[-1]["close"]
+    elif field == "open":
+        val = candles[0]["open"]
+    else:
+        return None
+    return round(float(val), 2)
+
+
+def _session_levels(candles: List[Dict]) -> Dict:
     """Previous-day, today, and Asian-session levels (SGT)."""
-    idx_dates = m15.index.normalize()
-    today = m15.index.max().normalize()
-    yesterday = today - timedelta(days=1)
+    by_date: Dict = defaultdict(list)
+    for c in candles:
+        by_date[c["dt_sgt"].date()].append(c)
+    dates = sorted(by_date)
+    today = dates[-1]
+    todays = by_date[today]
 
-    prev = m15[idx_dates == yesterday]
-    if prev.empty:  # weekend/holiday gap — use the most recent prior day present
-        prior_days = sorted(d for d in idx_dates.unique() if d < today)
-        if prior_days:
-            prev = m15[idx_dates == prior_days[-1]]
+    prior = [d for d in dates if d < today]
+    prev = by_date[prior[-1]] if prior else []  # handles weekend/holiday gaps
 
-    todays = m15[idx_dates == today]
-    asian = todays.between_time(f"{ASIAN_SESSION_START_H:02d}:00", f"{ASIAN_SESSION_END_H:02d}:00")
-
-    def hl(df, field):
-        if df.empty:
-            return None
-        return round(float({"high": df["high"].max(), "low": df["low"].min(),
-                            "close": df["close"].iloc[-1], "open": df["open"].iloc[0]}[field]), 2)
+    asian = [c for c in todays
+             if ASIAN_SESSION_START_H <= c["dt_sgt"].hour < ASIAN_SESSION_END_H
+             or (c["dt_sgt"].hour == ASIAN_SESSION_END_H and c["dt_sgt"].minute == 0)]
 
     return {
-        "previous_day": {"high": hl(prev, "high"), "low": hl(prev, "low"), "close": hl(prev, "close")},
+        "previous_day": {"high": _hl(prev, "high"), "low": _hl(prev, "low"), "close": _hl(prev, "close")},
         "today": {
-            "open": hl(todays, "open"),
-            "asian_session_high": hl(asian, "high"),
-            "asian_session_low": hl(asian, "low"),
-            "current_day_high": hl(todays, "high"),
-            "current_day_low": hl(todays, "low"),
+            "open": _hl(todays, "open"),
+            "asian_session_high": _hl(asian, "high"),
+            "asian_session_low": _hl(asian, "low"),
+            "current_day_high": _hl(todays, "high"),
+            "current_day_low": _hl(todays, "low"),
         },
     }
 
+
+# ---------------------------------------------------------------------------
+# Snapshot + price reaction
+# ---------------------------------------------------------------------------
 
 def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
     """Assemble the intraday data package (matches the spec's JSON shape)."""
@@ -160,8 +229,13 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
         raise MarketDataError(f"Insufficient {tf_label} candles ({len(candles)})")
     h1 = get_candles(H1, limit=250, symbol=symbol)
 
+    closes = [c["close"] for c in candles]
+    h1_closes = [c["close"] for c in h1]
     levels = _session_levels(candles)
-    current_price = round(float(candles["close"].iloc[-1]), 2)
+    current_price = round(float(candles[-1]["close"]), 2)
+
+    def _r(x):
+        return round(float(x), 2) if x is not None else None
 
     snapshot = {
         "instrument": symbol,
@@ -173,16 +247,16 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
         "previous_day": levels["previous_day"],
         "today": levels["today"],
         "indicators": {
-            "ema20": round(ema(candles["close"], 20), 2),
-            "ema50": round(ema(candles["close"], 50), 2),
-            "ema200": round(ema(candles["close"], 200), 2) if len(candles) >= 200 else None,
-            "atr14": round(atr(candles, 14), 2),
-            "h1_ema50": round(ema(h1["close"], 50), 2) if len(h1) >= 50 else None,
-            "h1_ema200": round(ema(h1["close"], 200), 2) if len(h1) >= 200 else None,
+            "ema20": _r(ema(closes, 20)),
+            "ema50": _r(ema(closes, 50)),
+            "ema200": _r(ema(closes, 200)) if len(candles) >= 200 else None,
+            "atr14": _r(atr(candles, 14)),
+            "h1_ema50": _r(ema(h1_closes, 50)) if len(h1) >= 50 else None,
+            "h1_ema200": _r(ema(h1_closes, 200)) if len(h1) >= 200 else None,
             "h4_trend": _h4_trend(symbol),
         },
         "upcoming_usd_news": upcoming_usd_news or [],
-        "_candles_df": candles,  # kept in-memory for the chart renderer; not serialized to DB
+        "_candles": candles,  # kept in-memory for swing-level detection; not serialized to DB
     }
     log.info("Snapshot built (%s): price=%s ema20=%s ema50=%s h4=%s",
              tf_label, current_price, snapshot["indicators"]["ema20"],
@@ -196,13 +270,13 @@ def get_price_reaction(release_utc: datetime, symbol: Optional[str] = None) -> D
     release_sgt = release_utc.astimezone(config.tz)
     try:
         m5 = get_candles("5min", limit=200, symbol=symbol)
-    except Exception as exc:  # MarketDataError, or a transient pandas/numpy import failure
+    except Exception as exc:  # MarketDataError or any transient fetch failure
         log.warning("price reaction unavailable: %s", exc)
         return {"price_before": None, "current_price": None, "price_change": "—"}
 
-    before = m5[m5.index < release_sgt]
-    price_before = round(float(before["close"].iloc[-1]), 2) if len(before) else None
-    current = round(float(m5["close"].iloc[-1]), 2)
+    before = [c for c in m5 if c["dt_sgt"] < release_sgt]
+    price_before = round(float(before[-1]["close"]), 2) if before else None
+    current = round(float(m5[-1]["close"]), 2)
     if price_before:
         chg = current - price_before
         pct = chg / price_before * 100
