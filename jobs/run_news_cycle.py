@@ -18,6 +18,7 @@ import pytz  # noqa: E402
 
 from config import config  # noqa: E402
 import calendar_service  # noqa: E402
+import news_filter  # noqa: E402
 import market_data  # noqa: E402
 import polarity  # noqa: E402
 import db  # noqa: E402
@@ -42,7 +43,7 @@ def _row_event(row: dict) -> dict:
     return {
         "time_sgt": _time_sgt(row["scheduled_at_sgt"]),
         "impact": row["impact"],
-        "event_name": row["event_name"],
+        "event_name": news_filter.display_name(row["event_name"]),
         "forecast": row["forecast"],
         "previous": row["previous"],
         "actual": row.get("actual"),
@@ -68,7 +69,7 @@ def _send_grouped(group, builder, field):
     primary = max(group, key=lambda r: 1 if r["impact"] == "high" else 0)
     message = builder(_row_event(primary))
     if len(group) > 1:
-        others = ", ".join(r["event_name"] for r in group if r["id"] != primary["id"])
+        others = ", ".join(news_filter.display_name(r["event_name"]) for r in group if r["id"] != primary["id"])
         message += f"\n\nAlso releasing at this time: {others}"
     telegram_client.send_message(message)
     for r in group:
@@ -115,7 +116,7 @@ def _publish_release(row, sched_utc, actual):
     impact_summary = f"Initial read: XAUUSD {pol.label}."
     if pol.label == "NEUTRAL":
         impact_summary += " In line / mixed — wait for price confirmation."
-    event = {"event_name": row["event_name"], "actual": actual,
+    event = {"event_name": news_filter.display_name(row["event_name"]), "actual": actual,
              "forecast": row["forecast"], "previous": row["previous"]}
     reaction_block = {
         "usd_bias_summary": pol.reason,

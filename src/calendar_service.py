@@ -24,6 +24,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from config import config
 import polarity
+import news_filter
 
 log = logging.getLogger("calendar")
 
@@ -63,7 +64,7 @@ class Event:
         return {
             "time_sgt": _fmt_time_sgt(self.scheduled_sgt),
             "impact": self.impact,
-            "event_name": self.event_name,
+            "event_name": news_filter.display_name(self.event_name),
             "forecast": self.forecast,
             "previous": self.previous,
             "actual": self.actual,
@@ -173,10 +174,11 @@ def normalize(raw: dict) -> Optional[Event]:
 def fetch_usd_events(from_date: str, to_date: str) -> List[Event]:
     """Fetch and filter to USD high/medium events for the inclusive date range."""
     raw = _request(from_date, to_date)
-    events = [e for e in (normalize(r) for r in raw) if e is not None]
+    normalized = [e for e in (normalize(r) for r in raw) if e is not None]
+    events = news_filter.apply(normalized)          # FF-style: drop energy/auction/derived + composite PMI
     events.sort(key=lambda e: e.scheduled_utc)
-    log.info("Fetched %d raw, %d USD high/medium events (%s..%s)",
-             len(raw), len(events), from_date, to_date)
+    log.info("Fetched %d raw -> %d USD high/medium -> %d after FF filter (%s..%s)",
+             len(raw), len(normalized), len(events), from_date, to_date)
     return events
 
 

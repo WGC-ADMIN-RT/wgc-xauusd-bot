@@ -14,10 +14,33 @@ from __future__ import annotations
 from typing import List, Optional, Sequence
 
 IMPACT_EMOJI = {"high": "🔴", "medium": "🟠", "low": "⚪"}
+_IMPACT_RANK = {"high": 2, "medium": 1, "low": 0}
 
 
 def impact_emoji(impact: str) -> str:
     return IMPACT_EMOJI.get((impact or "").lower(), "⚪")
+
+
+def _group_by_time(events: Sequence[dict]) -> List[List[dict]]:
+    """Group consecutive same-time events (events arrive pre-sorted by release time).
+
+    Grouping on consecutive equal time strings is safe even when a clock time recurs
+    on a later day: those events are non-adjacent in the sorted list, so they fall
+    into separate groups."""
+    groups: List[List[dict]] = []
+    current: List[dict] = []
+    key = object()
+    for ev in events:
+        t = ev.get("time_sgt")
+        if t != key:
+            if current:
+                groups.append(current)
+            current, key = [ev], t
+        else:
+            current.append(ev)
+    if current:
+        groups.append(current)
+    return groups
 
 
 def _fmt(value) -> str:
@@ -45,14 +68,20 @@ def daily_outlook(date_sgt: str, events: Sequence[dict]) -> str:
         "",
         "Today's tracked USD events for XAUUSD:",
     ]
-    for ev in events:
-        lines += [
-            "",
-            f"{ev['time_sgt']} — {impact_emoji(ev['impact'])} {ev['event_name']}",
-            f"Forecast: {_fmt(ev.get('forecast'))}",
-            f"Previous: {_fmt(ev.get('previous'))}",
-            f"XAUUSD note: {ev.get('short_reason', '')}",
-        ]
+    # Forex-Factory style: one time header, the same-time events listed under it.
+    for group in _group_by_time(events):
+        lines.append("")
+        lines.append(f"{group[0]['time_sgt']} — USD")
+        for ev in group:
+            lines.append(
+                f"{impact_emoji(ev['impact'])} {ev['event_name']} "
+                f"(F: {_fmt(ev.get('forecast'))} | P: {_fmt(ev.get('previous'))})"
+            )
+        # One consolidated XAUUSD note per time block, taken from the heaviest event.
+        primary = max(group, key=lambda e: _IMPACT_RANK.get((e.get("impact") or "").lower(), 0))
+        note = primary.get("short_reason")
+        if note:
+            lines.append(f"↳ XAUUSD: {note}")
     lines += [
         "",
         "Risk reminder:",
