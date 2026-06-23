@@ -466,9 +466,10 @@ def to_db_row(snapshot: Dict, plan: Dict, chart_path: Optional[str]) -> Dict:
         "analysis_time_sgt": datetime.now(config.tz).strftime("%Y-%m-%d %H:%M:%S"),
         "timeframe": config.intraday_tf_label,
         "chart_path": chart_path,
-        "raw_market_data_json": json.dumps(raw, default=str),
+        "market_data_json": json.dumps(raw, default=str),
         "bias": plan["bias"],
         "market_condition": plan.get("market_condition") or plan.get("bias"),
-        "plan_json": json.dumps(plan, default=str),
-        "member_message": plan["member_message"],
+        "confidence": plan.get("confidence"),
+        "gpt_output_json": json.dumps(plan, default=str),
+        "telegram_message": plan["member_message"],
     }

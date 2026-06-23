@@ -37,11 +37,12 @@ CREATE TABLE IF NOT EXISTS intraday_analyses (
     analysis_time_sgt   DATETIME     NOT NULL,
     timeframe           VARCHAR(8)   NOT NULL DEFAULT 'M5',
     chart_path          VARCHAR(255) DEFAULT NULL,
-    raw_market_data_json LONGTEXT    DEFAULT NULL,
+    market_data_json    LONGTEXT     DEFAULT NULL,
     bias                VARCHAR(16)  DEFAULT NULL,
     market_condition    VARCHAR(24)  DEFAULT NULL,
-    plan_json           LONGTEXT     DEFAULT NULL,
-    member_message      LONGTEXT     DEFAULT NULL,
+    confidence          TINYINT UNSIGNED DEFAULT NULL,
+    gpt_output_json     LONGTEXT     DEFAULT NULL,
+    telegram_message    LONGTEXT     DEFAULT NULL,
     created_at          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_time (analysis_time_utc)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

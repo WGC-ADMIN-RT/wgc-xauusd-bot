@@ -81,7 +81,38 @@ def init_schema() -> None:
         with conn.cursor() as cur:
             for stmt in statements:
                 cur.execute(stmt)
+            _migrate_intraday_columns(cur)
     log.info("Schema ensured (%d statements)", len(statements))
+
+
+def _column_exists(cur, table: str, column: str) -> bool:
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = %s",
+        (config.db.name, table, column),
+    )
+    return bool(cur.fetchone()["n"])
+
+
+def _migrate_intraday_columns(cur) -> None:
+    """Rename legacy intraday_analyses columns to PDF §9 names on existing DBs."""
+    renames = (
+        ("raw_market_data_json", "market_data_json"),
+        ("plan_json", "gpt_output_json"),
+        ("member_message", "telegram_message"),
+    )
+    for old, new in renames:
+        if _column_exists(cur, "intraday_analyses", old) and not _column_exists(cur, "intraday_analyses", new):
+            cur.execute(
+                f"ALTER TABLE intraday_analyses CHANGE `{old}` `{new}` LONGTEXT DEFAULT NULL"
+            )
+            log.info("Migrated intraday_analyses.%s -> %s", old, new)
+    if not _column_exists(cur, "intraday_analyses", "confidence"):
+        cur.execute(
+            "ALTER TABLE intraday_analyses ADD COLUMN confidence TINYINT UNSIGNED "
+            "DEFAULT NULL AFTER market_condition"
+        )
+        log.info("Added intraday_analyses.confidence column")
 
 
 def _naive_utc(dt: datetime) -> str:
@@ -188,8 +219,8 @@ def update_actual(event_id: int, actual: Optional[str], polarity: Optional[str],
 
 def insert_intraday(row: Dict) -> int:
     cols = ["instrument", "analysis_time_utc", "analysis_time_sgt", "timeframe",
-            "chart_path", "raw_market_data_json", "bias", "market_condition",
-            "plan_json", "member_message"]
+            "chart_path", "market_data_json", "bias", "market_condition", "confidence",
+            "gpt_output_json", "telegram_message"]
     placeholders = ", ".join(f"%({c})s" for c in cols)
     sql = f"INSERT INTO intraday_analyses ({', '.join(cols)}) VALUES ({placeholders})"
     with get_conn() as conn:
