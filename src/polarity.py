@@ -53,7 +53,7 @@ class PolarityResult:
     is_major: bool              # CPI/NFP/FOMC/PCE -> wider blackout, stricter handling
     usd_bias: str               # "bullish" | "bearish" | "neutral"
     xau_bias: str               # "bullish" | "bearish" | "neutral"
-    label: str                  # "BULLISH" | "BEARISH" | "NEUTRAL" (XAUUSD)
+    label: str                  # "BULLISH" | "BEARISH" | "NEUTRAL" | "MIXED" (XAUUSD)
     reason: str                 # short human explanation
     surprise: Optional[float]   # actual - forecast (None if not numeric)
 
@@ -88,6 +88,41 @@ def _to_float(value) -> Optional[float]:
         return None
 
 
+def _tolerance(baseline: float) -> float:
+    return max(abs(baseline) * 0.005, 1e-9)
+
+
+def _xau_bias_for(
+    actual: float,
+    baseline: float,
+    normal_direction: bool,
+) -> str:
+    """Return xau_bias for actual vs a single baseline (forecast or previous)."""
+    surprise = actual - baseline
+    if abs(surprise) <= _tolerance(baseline):
+        return "neutral"
+    higher = surprise > 0
+    usd_bullish = (higher and normal_direction) or ((not higher) and (not normal_direction))
+    return "bearish" if usd_bullish else "bullish"
+
+
+def _mixed_result(
+    category: str,
+    major: bool,
+    reason: str,
+    surprise: Optional[float],
+) -> PolarityResult:
+    return PolarityResult(
+        category=category,
+        is_major=major,
+        usd_bias="mixed",
+        xau_bias="mixed",
+        label="MIXED",
+        reason=reason,
+        surprise=surprise,
+    )
+
+
 def evaluate(event_name: str, actual, forecast, previous=None) -> PolarityResult:
     """Compute USD/XAUUSD bias from actual vs forecast (falling back to previous)."""
     category, normal_direction = classify_event(event_name)
@@ -107,9 +142,25 @@ def evaluate(event_name: str, actual, forecast, previous=None) -> PolarityResult
         )
 
     surprise = a - baseline
+
+    # PDF §4: MIXED when actual conflicts with forecast vs previous reads.
+    if f is not None and p is not None and f != p:
+        bias_vs_forecast = _xau_bias_for(a, f, normal_direction)
+        bias_vs_previous = _xau_bias_for(a, p, normal_direction)
+        if bias_vs_forecast != bias_vs_previous:
+            low, high = min(f, p), max(f, p)
+            between = low < a < high
+            reason = (
+                "Actual between forecast and previous — conflicting USD reads, "
+                "so XAUUSD is MIXED. Wait for price confirmation."
+                if between
+                else "Actual vs forecast and vs previous point different ways — "
+                "XAUUSD is MIXED. Wait for price confirmation."
+            )
+            return _mixed_result(category, major, reason, surprise)
+
     # Treat a tiny deviation (<= 0.5% of baseline magnitude, or near-zero) as in-line.
-    tolerance = max(abs(baseline) * 0.005, 1e-9)
-    if abs(surprise) <= tolerance:
+    if abs(surprise) <= _tolerance(baseline):
         return PolarityResult(
             category=category, is_major=major,
             usd_bias="neutral", xau_bias="neutral", label="NEUTRAL",

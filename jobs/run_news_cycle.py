@@ -123,8 +123,10 @@ def _publish_release(row, sched_utc, actual, now_utc):
         pol.xau_bias, reaction["price_before"], ref_price
     )
     impact_summary = f"Initial read: XAUUSD {pol.label}."
-    if pol.label == "NEUTRAL":
-        impact_summary += " In line / mixed."
+    if pol.label == "MIXED":
+        impact_summary += " Conflicting vs forecast/previous — wait for price confirmation."
+    elif pol.label == "NEUTRAL":
+        impact_summary += " In line — limited directional bias."
     event = {"event_name": news_filter.display_name(row["event_name"]), "actual": actual,
              "forecast": row["forecast"], "previous": row["previous"]}
     reaction_block = {

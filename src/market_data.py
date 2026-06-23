@@ -384,7 +384,9 @@ def price_action_confirmation(
     if price_before is None or price_ref is None:
         return "Price confirmation pending — need more candle data."
     move = price_ref - price_before
-    if xau_bias == "neutral":
+    if xau_bias in {"neutral", "mixed"}:
+        if xau_bias == "mixed":
+            return "Mixed data read — wait for a clear M5 confirmation candle."
         return "Mixed/in-line data — wait for a clear M5 confirmation candle."
     if abs(move) < 0.05:
         return "Price action is flat so far — wait for confirmation."
