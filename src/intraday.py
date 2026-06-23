@@ -291,62 +291,52 @@ def _zone_range(z: Dict) -> str:
 def _rule_based_gameplans(
     bias: str, demand: List[Dict], supply: List[Dict], snapshot: Dict,
 ) -> List[Dict]:
-    """Four conditional game plans in trader prose (fallback when AI is unavailable)."""
+    """Short Orient FX-style game plans (fallback when AI is unavailable)."""
     tf = config.intraday_tf_label
     h1 = (snapshot.get("h1_structure") or {})
     struct_h, struct_l = h1.get("structure_high"), h1.get("structure_low")
     plans: List[Dict] = []
 
+    def _short_tag(z: Dict) -> str:
+        label = (z.get("label") or "").strip()
+        for key in ("FVG", "OB", "LQ", "SBR", "RBS", "flip"):
+            if key.lower() in label.lower():
+                return key
+        return label.split("/")[0].strip() or "zone"
+
     if demand:
         z = demand[0]
         rng = _zone_range(z)
-        tag = z.get("label") or "demand"
-        if bias == "bullish":
+        tag = _short_tag(z)
+        if bias == "bearish":
             plans.append({"text": (
-                f"Our {tag} zone at {rng} is today's primary demand. If price holds "
-                f"the zone and prints a {tf} bullish CHoCH, look for longs on a pullback "
-                f"to an {tf} FVG while H1 stays {bias}; a {tf} close below the zone "
-                f"invalidates the long idea."
+                f"Our {tag} zone at {rng} is pivotal — if price rejects with {tf} bearish "
+                f"CHoCH look for sells; break below targets the next demand pocket."
             )})
         else:
-            plans.append({"text": (
-                f"Our {tag} zone at {rng} is a pivotal decision area. If price sweeps "
-                f"into the zone and rejects with a {tf} bearish CHoCH, look for shorts "
-                f"toward the next demand pocket; acceptance below the zone opens continuation "
-                f"shorts in line with H1 {bias}."
-            )})
+            plans.append({"text": f"Potential buys at our {tag} zone at {rng}"})
 
     if supply:
         z = supply[0]
         rng = _zone_range(z)
-        tag = z.get("label") or "supply"
-        plans.append({"text": (
-            f"At our {tag} zone ({rng}), watch for a fade if price runs into supply and "
-            f"prints a {tf} bearish CHoCH — target the nearest demand zone below. "
-            f"A clean {tf} close above the zone targets the next H1 supply shelf."
-        )})
+        tag = _short_tag(z)
+        plans.append({"text": f"Potential sells at our {tag} zone at {rng}"})
 
-    if struct_l:
-        plans.append({"text": (
-            f"Potential longs if price breaks and holds above the prior H1 structure low "
-            f"at {struct_l} with a {tf} bullish CHoCH; wait for a pullback to an {tf} "
-            f"FVG before entry while H1 bias remains {bias}."
-        )})
+    if len(supply) > 1:
+        z = supply[1]
+        plans.append({
+            "text": f"Medium risk sells at our {_short_tag(z)} zone at {_zone_range(z)}",
+        })
 
     if struct_h:
-        plans.append({"text": (
-            f"Potential shorts if price rejects the H1 structure high at {struct_h} with "
-            f"a {tf} bearish CHoCH; scale into supply on the retest and target the "
-            f"nearest demand zone."
-        )})
+        plans.append({"text": f"Potential sells if price rejects structure high at {struct_h}"})
+
+    if struct_l:
+        plans.append({"text": f"Potential buys if price breaks and holds above {struct_l}"})
 
     if len(plans) < 4 and len(demand) > 1:
         z = demand[1]
-        rng = _zone_range(z)
-        plans.append({"text": (
-            f"Secondary demand at {rng}: range long only on a sharp {tf} rejection wick "
-            f"+ bullish close; skip if H1 momentum is strongly against the trade."
-        )})
+        plans.append({"text": f"Potential buys at our {_short_tag(z)} zone at {_zone_range(z)}"})
 
     return plans[: max(4, min(5, config.intraday_gameplans))]
 

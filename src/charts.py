@@ -94,8 +94,9 @@ def render(snapshot: Dict) -> Optional[str]:
         log.warning("CHARTIMG_API_KEY not set — chart skipped (text plan still sent)")
         return None
     if config.chartimg_layout_id:
-        log.info("Chart: TradingView layout %s @ %s (your saved setup)",
-                 config.chartimg_layout_id, _interval())
+        log.info("Chart: TradingView layout %s @ %s (zoomOut=%s moveLeft=%s, 2 Asian sessions)",
+                 config.chartimg_layout_id, _interval(),
+                 config.chartimg_zoom_out, config.chartimg_move_left)
         return _render_layout()
     if config.intraday_tf != "5min":
         log.warning("INTRADAY_TF=%s — member chart spec is M5; set INTRADAY_TF=5min", config.intraday_tf)
@@ -118,6 +119,10 @@ def _render_layout() -> Optional[str]:
         "width": config.chartimg_width,
         "height": config.chartimg_height,
     }
+    if config.chartimg_zoom_out > 0:
+        payload["zoomOut"] = min(config.chartimg_zoom_out, 25)
+    if config.chartimg_move_left > 0:
+        payload["moveLeft"] = min(config.chartimg_move_left, 50)
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
     except requests.RequestException as exc:

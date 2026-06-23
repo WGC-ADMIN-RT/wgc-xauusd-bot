@@ -1,7 +1,7 @@
 """AI intraday analysis — Claude as a 20-year XAUUSD trader (M5 execution, H1 bias).
 
-Structured output via tool-use: supply/demand zones as price RANGES + 4-5 prose game
-plans matching the member Telegram format (chart screenshot + numbered Gameplan).
+Structured output via tool-use: supply/demand zones as price RANGES + 4-5 SHORT
+game plans (Orient FX style) for Telegram.
 """
 from __future__ import annotations
 
@@ -25,23 +25,24 @@ _TOOL_NAME = "publish_intraday_plan"
 
 _SYSTEM = (
     "You are a professional XAUUSD (spot gold) trader with 20 years of experience.\n"
-    "You analyse ONLY the M5 (5-minute) and H1 (1-hour) charts — no other timeframes.\n"
-    "M5 is for execution and triggers; H1 sets directional bias and market structure.\n\n"
-    "You think in SUPPLY and DEMAND ZONES — never single prices. Every key level is a "
-    "RANGE (low–high), e.g. 4110–4118 or 4331.5–4323.7. Label zones with trader terms "
-    "where appropriate: OB (order block), FVG (fair value gap), LQ (liquidity), "
-    "SBR (support-becomes-resistance), inducement, structure high/low.\n\n"
-    f"Produce exactly {config.intraday_gameplans} numbered GAME PLANS (4 to 5). "
-    "Each game plan is one flowing paragraph of conditional logic — IF price does X at "
-    "zone Y on M5 with H1 context Z, THEN look for long/short, invalidation, target. "
-    "Cover continuation, pullback, fade at supply, sweep of liquidity, and breakout "
-    "scenarios. Reference M5 CHoCH / structure breaks and H1 bias — not M1 or M15.\n\n"
-    "Use zone_hints, h1_structure, and indicators from the JSON payload. Tighten ranges "
-    "to realistic gold width (~0.5–2.0 pts for M5, wider for H1 supply/demand).\n\n"
-    "Example game plan tone:\n"
-    "'Our LQ zone at 4331.5–4323.7 serves as a pivotal demand zone. If price respects "
-    "it and prints an M5 bullish CHoCH, look for longs on a pullback to an M5 FVG; "
-    "if price dumps through, wait for an M5 bearish CHoCH and fade into H1 supply.'\n\n"
+    "You analyse ONLY M5 (execution) and H1 (bias/structure).\n\n"
+    "ZONES: supply/demand as RANGES (low–high). Tags: OB, FVG, LQ, SBR, RBS, flip, "
+    "structure high/low.\n\n"
+    f"Produce exactly {config.intraday_gameplans} SHORT game plans (4–5) — Orient FX style.\n"
+    "Each plan is ONE line (max TWO short sentences only for the single pivotal/flip zone).\n\n"
+    "Format (use these openers):\n"
+    "  • Potential buys at our {tag} zone at {low}-{high}\n"
+    "  • Potential sells at our {tag} zone at {low}-{high}\n"
+    "  • Medium risk buys/sells at our {tag} zone at {low}-{high}\n"
+    "  • Potential buys/sells if price breaks {level}\n"
+    "  • Our {tag} zone at {low}-{high} is pivotal — if price rejects with M5 CHoCH "
+    "look for {direction}; break the other way targets the next zone.\n\n"
+    "Rules:\n"
+    "  • Keep game plans SHORT — no long paragraphs, no repeating the zone lists.\n"
+    "  • Reference zones from demand_zones/supply_zones already listed in the message.\n"
+    "  • M5 triggers only (CHoCH, break, reject, sweep, inducement).\n"
+    "  • h1_context: 2–3 sentences max (bias + structure high/low + EMA context).\n"
+    "  • Chart context: member chart shows TWO full Asian sessions (08:00–16:00 SGT).\n\n"
     f"Respond ONLY by calling the {_TOOL_NAME} tool."
 )
 
@@ -68,7 +69,7 @@ _TOOL = {
             },
             "h1_context": {
                 "type": "string",
-                "description": "1–2 sentences: H1 structure, trend, key breaks",
+                "description": "2–3 sentences: H1 structure, trend, key EMA/levels",
             },
             "demand_zones": {
                 "type": "array", "minItems": 2, "maxItems": 4, "items": _ZONE_SCHEMA,
@@ -86,8 +87,9 @@ _TOOL = {
                         "text": {
                             "type": "string",
                             "description": (
-                                "One complete game plan paragraph. Mention the zone as a "
-                                "range, M5 trigger, H1 context, invalidation, and target."
+                                "One SHORT game plan line (Orient FX style). "
+                                "Start with Potential/Medium risk buys or sells; "
+                                "include zone tag + price range."
                             ),
                         },
                     },
@@ -96,7 +98,7 @@ _TOOL = {
             },
             "news_risk": {
                 "type": "string",
-                "description": "USD news risk for the session and impact on plans",
+                "description": "One short line on USD news risk for the session",
             },
         },
         "required": ["h1_bias", "h1_context", "demand_zones", "supply_zones",
@@ -109,8 +111,8 @@ def _user_payload(snapshot: Dict, upcoming_events: List[Dict]) -> str:
     data = {k: v for k, v in snapshot.items() if not k.startswith("_")}
     data["upcoming_usd_news"] = upcoming_events
     return (
-        "Build today's XAUUSD intraday plan from this M5/H1 data. "
-        "Zones must be ranges; output 4–5 game plans in trader prose.\n\n"
+        "Build today's XAUUSD intraday plan. Zones as ranges; 4–5 SHORT one-line game "
+        "plans (Orient FX style). Do not write long paragraphs.\n\n"
         + json.dumps(data, default=str, indent=2)
     )
 

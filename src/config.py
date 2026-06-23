@@ -69,6 +69,9 @@ class Config:
     chartimg_layout_id: str = field(default_factory=lambda: _get("CHARTIMG_LAYOUT_ID"))
     chartimg_tv_session: str = field(default_factory=lambda: _get("CHARTIMG_TV_SESSION_ID"))
     chartimg_tv_session_sign: str = field(default_factory=lambda: _get("CHARTIMG_TV_SESSION_SIGN"))
+    # Zoom/pan so the M5 layout shows ~2 full Asian sessions (08:00–16:00 SGT). Tune in .env.
+    chartimg_zoom_out: int = field(default_factory=lambda: _get_int("CHARTIMG_ZOOM_OUT", 14))
+    chartimg_move_left: int = field(default_factory=lambda: _get_int("CHARTIMG_MOVE_LEFT", 10))
 
     # Operational
     timezone_name: str = field(default_factory=lambda: _get("TIMEZONE", "Asia/Singapore"))

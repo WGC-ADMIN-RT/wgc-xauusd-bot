@@ -302,6 +302,37 @@ def _hl(candles: List[Dict], field: str) -> Optional[float]:
     return round(float(val), 2)
 
 
+def _asian_candles_for_date(candles: List[Dict], day) -> List[Dict]:
+    return [
+        c for c in candles
+        if c["dt_sgt"].date() == day
+        and (
+            ASIAN_SESSION_START_H <= c["dt_sgt"].hour < ASIAN_SESSION_END_H
+            or (c["dt_sgt"].hour == ASIAN_SESSION_END_H and c["dt_sgt"].minute == 0)
+        )
+    ]
+
+
+def _last_asian_sessions(candles: List[Dict], count: int = 2) -> List[Dict]:
+    """Last N calendar Asian sessions (08:00–16:00 SGT) with high/low."""
+    by_date: Dict = defaultdict(list)
+    for c in candles:
+        by_date[c["dt_sgt"].date()].append(c)
+    sessions = []
+    for day in sorted(by_date.keys(), reverse=True):
+        asian = _asian_candles_for_date(candles, day)
+        if len(asian) < 10:
+            continue
+        sessions.append({
+            "date_sgt": day.isoformat(),
+            "high": _hl(asian, "high"),
+            "low": _hl(asian, "low"),
+        })
+        if len(sessions) >= count:
+            break
+    return list(reversed(sessions))
+
+
 def _session_levels(candles: List[Dict]) -> Dict:
     """Previous-day, today, and Asian-session levels (SGT)."""
     by_date: Dict = defaultdict(list)
@@ -314,9 +345,7 @@ def _session_levels(candles: List[Dict]) -> Dict:
     prior = [d for d in dates if d < today]
     prev = by_date[prior[-1]] if prior else []  # handles weekend/holiday gaps
 
-    asian = [c for c in todays
-             if ASIAN_SESSION_START_H <= c["dt_sgt"].hour < ASIAN_SESSION_END_H
-             or (c["dt_sgt"].hour == ASIAN_SESSION_END_H and c["dt_sgt"].minute == 0)]
+    asian = _asian_candles_for_date(candles, today)
 
     return {
         "previous_day": {"high": _hl(prev, "high"), "low": _hl(prev, "low"), "close": _hl(prev, "close")},
@@ -327,6 +356,7 @@ def _session_levels(candles: List[Dict]) -> Dict:
             "current_day_high": _hl(todays, "high"),
             "current_day_low": _hl(todays, "low"),
         },
+        "asian_sessions": _last_asian_sessions(candles, 2),
     }
 
 
@@ -338,7 +368,7 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
     """Assemble the intraday data package (matches the spec's JSON shape)."""
     symbol = config.instrument
     tf, tf_label = config.intraday_tf, config.intraday_tf_label
-    candles = get_candles(tf, limit=200, symbol=symbol)
+    candles = get_candles(tf, limit=400, symbol=symbol)
     if len(candles) < 50:
         raise MarketDataError(f"Insufficient {tf_label} candles ({len(candles)})")
     h1 = get_candles(H1, limit=250, symbol=symbol)
@@ -380,6 +410,8 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
         "spread": round(float(config.intraday_spread), 2),
         "previous_day": levels["previous_day"],
         "today": levels["today"],
+        "asian_sessions": levels.get("asian_sessions", []),
+        "chart_note": "Chart must show two full Asian sessions (08:00–16:00 SGT) on M5.",
         "h1_structure": {
             "trend": indicators["h1_trend"],
             "structure_high": h1_hi[-1] if h1_hi else None,
