@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import List, Optional, Sequence
 
 IMPACT_EMOJI = {"high": "🔴", "medium": "🟠", "low": "⚪"}
-_IMPACT_RANK = {"high": 2, "medium": 1, "low": 0}
 
 
 def impact_emoji(impact: str) -> str:
@@ -77,11 +76,6 @@ def daily_outlook(date_sgt: str, events: Sequence[dict]) -> str:
                 f"{impact_emoji(ev['impact'])} {ev['event_name']} "
                 f"(F: {_fmt(ev.get('forecast'))} | P: {_fmt(ev.get('previous'))})"
             )
-        # One consolidated XAUUSD note per time block, taken from the heaviest event.
-        primary = max(group, key=lambda e: _IMPACT_RANK.get((e.get("impact") or "").lower(), 0))
-        note = primary.get("short_reason")
-        if note:
-            lines.append(f"↳ XAUUSD: {note}")
     lines += [
         "",
         "Risk reminder:",
