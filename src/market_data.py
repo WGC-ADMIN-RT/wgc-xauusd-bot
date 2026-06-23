@@ -13,12 +13,19 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-import pandas as pd
 import pytz
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from config import config
+
+# NOTE: pandas/numpy are imported LAZILY inside the functions that need them, not at
+# module top. On this shared cPanel account (RLIMIT_NPROC ~1400) the every-minute
+# news cron imports this module constantly; importing numpy that often under the
+# process cap kept truncating the install ("numpy.lib.utils missing"). With lazy
+# imports, numpy is only loaded by the once-daily intraday snapshot and by an actual
+# post-release price reaction — and `from __future__ import annotations` keeps the
+# `pd.DataFrame` type hints valid without importing pandas at module load.
 
 log = logging.getLogger("market_data")
 
@@ -65,6 +72,7 @@ def _request(interval: str, symbol: str, limit: int) -> List[dict]:
 
 def get_candles(interval: str, limit: int = 250, symbol: Optional[str] = None) -> pd.DataFrame:
     """Return an OHLCV DataFrame indexed by SGT datetime, oldest→newest, trimmed to `limit`."""
+    import pandas as pd  # lazy: keeps numpy out of the every-minute news import path
     symbol = symbol or config.instrument
     raw = _request(interval, symbol, limit)
     df = pd.DataFrame(raw)
@@ -83,6 +91,7 @@ def ema(series: pd.Series, period: int) -> float:
 
 
 def atr(df: pd.DataFrame, period: int = 14) -> float:
+    import pandas as pd  # lazy (see module note)
     high, low, close = df["high"], df["low"], df["close"]
     prev_close = close.shift(1)
     tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
@@ -187,7 +196,7 @@ def get_price_reaction(release_utc: datetime, symbol: Optional[str] = None) -> D
     release_sgt = release_utc.astimezone(config.tz)
     try:
         m5 = get_candles("5min", limit=200, symbol=symbol)
-    except MarketDataError as exc:
+    except Exception as exc:  # MarketDataError, or a transient pandas/numpy import failure
         log.warning("price reaction unavailable: %s", exc)
         return {"price_before": None, "current_price": None, "price_change": "—"}
 
