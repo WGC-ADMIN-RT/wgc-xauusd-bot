@@ -11,6 +11,12 @@ set -u
 APP="${HOME:?HOME not set}/wgc-xauusd-bot"
 JOB="${1:?usage: run_job.sh jobs/<script>.py [--force]}"
 shift || true
+# Accept shorthand from cPanel (e.g. run_news_cycle.py -> jobs/run_news_cycle.py).
+case "$JOB" in
+  */*) ;;
+  jobs/*) ;;
+  *) JOB="jobs/$JOB" ;;
+esac
 LOCK="${TMPDIR:-/tmp}/wgc-$(basename "$JOB" .py).lock"
 cd "$APP" || exit 1
 exec flock -n "$LOCK" "$APP/.venv/bin/python" "$JOB" "$@"

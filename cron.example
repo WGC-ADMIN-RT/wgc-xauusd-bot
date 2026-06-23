@@ -12,3 +12,5 @@ cd /home/dyznoaic/wgc-xauusd-bot && flock -n /tmp/wgc-intraday.lock .venv/bin/py
 # --- Every minute: 1h / 15m pre-news alerts + post-release breakdown ---
 # Minute: *   Hour: *   Day: *   Month: *   Weekday: *
 cd /home/dyznoaic/wgc-xauusd-bot && flock -n /tmp/wgc-news.lock .venv/bin/python jobs/run_news_cycle.py
+# Or via wrapper (run_job.sh accepts jobs/run_news_cycle.py or run_news_cycle.py):
+# flock -n /tmp/wgc_news.lock bash /home/dyznoaic/wgc-xauusd-bot/run_job.sh run_news_cycle.py >> /home/dyznoaic/wgc-xauusd-bot/logs/cron_news.log 2>&1
