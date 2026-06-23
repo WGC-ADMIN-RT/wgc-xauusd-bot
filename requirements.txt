@@ -1,7 +1,6 @@
 # Core — installs fast/light, gets news + intraday text analysis live.
 requests==2.32.3
 urllib3<2  # host OpenSSL 1.0.2k: urllib3 v2 needs OpenSSL 1.1.1+; keeps requests importable
-urllib3<2  # host OpenSSL 1.0.2k: urllib3 v2 needs OpenSSL 1.1.1+; pin keeps requests importable
 PyMySQL==1.1.1
 cryptography==44.0.0
 pytz==2024.2
