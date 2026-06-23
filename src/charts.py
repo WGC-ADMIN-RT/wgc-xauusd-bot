@@ -94,13 +94,31 @@ def render(snapshot: Dict) -> Optional[str]:
         log.warning("CHARTIMG_API_KEY not set — chart skipped (text plan still sent)")
         return None
     if config.chartimg_layout_id:
-        log.info("Chart: TradingView layout %s @ %s (zoomOut=%s moveLeft=%s, 2 Asian sessions)",
-                 config.chartimg_layout_id, _interval(),
-                 config.chartimg_zoom_out, config.chartimg_move_left)
+        log.info("Chart: TradingView layout %s @ %s (saved layout zoom)",
+                 config.chartimg_layout_id, _interval())
         return _render_layout()
     if config.intraday_tf != "5min":
         log.warning("INTRADAY_TF=%s — member chart spec is M5; set INTRADAY_TF=5min", config.intraday_tf)
     return _render_advanced(snapshot)
+
+
+def _layout_chart_payload() -> Dict:
+    """Chart-IMG layout request body — only symbol/interval/size unless .env overrides."""
+    payload = {
+        "symbol": config.chartimg_symbol,
+        "interval": _interval(),
+        "width": config.chartimg_width,
+        "height": config.chartimg_height,
+    }
+    if config.chartimg_zoom_in > 0:
+        payload["zoomIn"] = min(config.chartimg_zoom_in, 25)
+    if config.chartimg_zoom_out > 0:
+        payload["zoomOut"] = min(config.chartimg_zoom_out, 25)
+    if config.chartimg_move_left > 0:
+        payload["moveLeft"] = min(config.chartimg_move_left, 50)
+    if config.chartimg_move_right > 0:
+        payload["moveRight"] = min(config.chartimg_move_right, 50)
+    return payload
 
 
 def _render_layout() -> Optional[str]:
@@ -113,16 +131,7 @@ def _render_layout() -> Optional[str]:
     if config.chartimg_tv_session_sign:
         headers["tradingview-session-id-sign"] = config.chartimg_tv_session_sign
     # The layout carries its own studies/drawings; we only set symbol/interval/size.
-    payload = {
-        "symbol": config.chartimg_symbol,
-        "interval": _interval(),
-        "width": config.chartimg_width,
-        "height": config.chartimg_height,
-    }
-    if config.chartimg_zoom_out > 0:
-        payload["zoomOut"] = min(config.chartimg_zoom_out, 25)
-    if config.chartimg_move_left > 0:
-        payload["moveLeft"] = min(config.chartimg_move_left, 50)
+    payload = _layout_chart_payload()
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
     except requests.RequestException as exc:
