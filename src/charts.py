@@ -37,6 +37,16 @@ def _dig(snapshot: Dict, dotted: str):
     return cur
 
 
+def _pretty_dt(dt: datetime) -> str:
+    """Human-friendly stamp, e.g. '21st June 2026, 2:30 PM'."""
+    day = dt.day
+    suffix = "th" if 11 <= day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    # %I/%p are zero-padded/locale-dependent on some libc builds — normalise by hand.
+    hour12 = dt.hour % 12 or 12
+    ampm = "AM" if dt.hour < 12 else "PM"
+    return f"{day}{suffix} {dt.strftime('%B %Y')}, {hour12}:{dt.strftime('%M')} {ampm}"
+
+
 def render(snapshot: Dict) -> Optional[str]:
     """Render the chart from a market_data snapshot. Returns the PNG path (or None)."""
     if config.chart_provider == "chartimg":
@@ -79,10 +89,11 @@ def _render_self(snapshot: Dict) -> Optional[str]:
             colors.append(color)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    stamp = datetime.now(config.tz).strftime("%Y%m%d_%H%M")
+    now = datetime.now(config.tz)
+    stamp = now.strftime("%Y%m%d_%H%M")  # filename-safe
     out_path = os.path.join(OUTPUT_DIR, f"{config.instrument}_{tf_label}_{stamp}.png")
 
-    title = f"\n{config.instrument}  {tf_label} — last {len(plot_df)} candles  ({stamp} SGT)"
+    title = f"\n{config.instrument}  {tf_label} — last {len(plot_df)} candles\n{_pretty_dt(now)} SGT"
     style = mpf.make_mpf_style(base_mpf_style="charles", rc={"font.size": 9})
 
     try:
@@ -97,6 +108,7 @@ def _render_self(snapshot: Dict) -> Optional[str]:
             figscale=1.2,
             tight_layout=True,
             title=title,
+            xlabel="Time (SGT)",
             savefig=dict(fname=out_path, dpi=130, bbox_inches="tight"),
         )
     except Exception as exc:  # rendering must never crash the analysis job
