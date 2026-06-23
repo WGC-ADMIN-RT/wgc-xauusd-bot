@@ -17,6 +17,13 @@ def _get(key: str, default: str = "") -> str:
     return os.environ.get(key, default).strip()
 
 
+def _get_int(key: str, default: int) -> int:
+    try:
+        return int(os.environ.get(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _get_float(key: str, default: float) -> float:
     try:
         return float(os.environ.get(key, str(default)))
