@@ -69,8 +69,8 @@ class Config:
     chartimg_layout_id: str = field(default_factory=lambda: _get("CHARTIMG_LAYOUT_ID"))
     chartimg_tv_session: str = field(default_factory=lambda: _get("CHARTIMG_TV_SESSION_ID"))
     chartimg_tv_session_sign: str = field(default_factory=lambda: _get("CHARTIMG_TV_SESSION_SIGN"))
-    # Optional Chart-IMG layout overrides (0 = off — use your saved TradingView layout zoom).
-    # zoomOut/moveLeft caused squashed candles + empty future time; only set if tuning manually.
+    # Optional Chart-IMG layout zoom/pan (0 = auto-fit two Asian sessions on layout charts).
+    # Explicit values override auto zoom; wrong zoomOut/moveLeft can squash candles.
     chartimg_zoom_in: int = field(default_factory=lambda: _get_int("CHARTIMG_ZOOM_IN", 0))
     chartimg_zoom_out: int = field(default_factory=lambda: _get_int("CHARTIMG_ZOOM_OUT", 0))
     chartimg_move_left: int = field(default_factory=lambda: _get_int("CHARTIMG_MOVE_LEFT", 0))

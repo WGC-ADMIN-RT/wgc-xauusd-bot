@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional
 
 import pytz
@@ -313,6 +313,41 @@ def _asian_candles_for_date(candles: List[Dict], day) -> List[Dict]:
     ]
 
 
+def compute_asian_chart_range(
+    asian_sessions: List[Dict],
+    *,
+    now_sgt: Optional[datetime] = None,
+    pad_before_min: int = 60,
+    pad_after_min: int = 30,
+) -> Optional[Dict[str, str]]:
+    """UTC ISO8601 ``{from, to}`` spanning the last two Asian sessions (08:00–16:00 SGT).
+
+    Used by Chart-IMG so the intraday screenshot shows two full Asian session boxes.
+    """
+    if len(asian_sessions) < 2:
+        return None
+    tz = config.tz
+    now_sgt = now_sgt or datetime.now(tz)
+
+    d0 = date.fromisoformat(asian_sessions[0]["date_sgt"])
+    d1 = date.fromisoformat(asian_sessions[1]["date_sgt"])
+
+    start_sgt = tz.localize(datetime.combine(d0, time(ASIAN_SESSION_START_H, 0)))
+    start_sgt -= timedelta(minutes=pad_before_min)
+
+    end_sgt = tz.localize(datetime.combine(d1, time(ASIAN_SESSION_END_H, 0)))
+    end_sgt = min(end_sgt, now_sgt) + timedelta(minutes=pad_after_min)
+    if end_sgt <= start_sgt:
+        return None
+
+    fmt = "%Y-%m-%dT%H:%M:%S.000Z"
+    utc = pytz.UTC
+    return {
+        "from": start_sgt.astimezone(utc).strftime(fmt),
+        "to": end_sgt.astimezone(utc).strftime(fmt),
+    }
+
+
 def _last_asian_sessions(candles: List[Dict], count: int = 2) -> List[Dict]:
     """Last N calendar Asian sessions (08:00–16:00 SGT) with high/low."""
     by_date: Dict = defaultdict(list)
@@ -411,6 +446,7 @@ def build_snapshot(upcoming_usd_news: Optional[List[dict]] = None) -> Dict:
         "previous_day": levels["previous_day"],
         "today": levels["today"],
         "asian_sessions": levels.get("asian_sessions", []),
+        "chart_range": compute_asian_chart_range(levels.get("asian_sessions", [])),
         "chart_note": "Chart must show two full Asian sessions (08:00–16:00 SGT) on M5.",
         "h1_structure": {
             "trend": indicators["h1_trend"],

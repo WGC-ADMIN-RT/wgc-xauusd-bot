@@ -36,8 +36,9 @@ def _upcoming(now_sgt):
 
 
 def main() -> None:
+    forced = "--force" in sys.argv
     # SGT self-gate (DST-proof): only fire inside the 14:30 SGT window, once/day.
-    if "--force" not in sys.argv and not schedule_guard.daily_due(config.intraday_analysis_sgt, 10, "intraday"):
+    if not forced and not schedule_guard.daily_due(config.intraday_analysis_sgt, 10, "intraday"):
         return
     now_sgt = datetime.now(config.tz)
     upcoming = _upcoming(now_sgt)
@@ -60,7 +61,7 @@ def main() -> None:
     try:
         db.insert_intraday(intraday.to_db_row(snapshot, plan, chart_path))
     except Exception:
-        log.warning("intraday_analyses insert failed")
+        log.exception("intraday_analyses insert failed")
 
     if chart_path:
         telegram_client.send_photo(chart_path, caption=plan["member_message"])
@@ -68,8 +69,9 @@ def main() -> None:
         telegram_client.send_message(plan["member_message"] + "\n\n(Chart image unavailable this session.)")
 
     db.audit("intraday", "sent", output_json=f"bias={plan['bias']} plan={plan['preferred_plan']}")
-    schedule_guard.mark_done("intraday")
-    log.info("Intraday plan published (bias=%s)", plan["bias"])
+    if not forced:
+        schedule_guard.mark_done("intraday")
+    log.info("Intraday plan published (bias=%s%s)", plan["bias"], " [force]" if forced else "")
 
 
 if __name__ == "__main__":

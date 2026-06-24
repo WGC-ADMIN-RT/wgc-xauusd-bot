@@ -21,8 +21,9 @@ log = logging.getLogger("job.outlook")
 
 
 def main() -> None:
+    forced = "--force" in sys.argv
     # SGT self-gate (DST-proof): only fire inside the 12:00 SGT window, once/day.
-    if "--force" not in sys.argv and not schedule_guard.daily_due(config.daily_outlook_sgt, 10, "outlook"):
+    if not forced and not schedule_guard.daily_due(config.daily_outlook_sgt, 10, "outlook"):
         return
     now_sgt = datetime.now(config.tz)
     try:
@@ -43,12 +44,18 @@ def main() -> None:
         except Exception:
             log.warning("Upsert failed for %s", e.event_name)
 
+    try:
+        db.suppress_non_relevant_scheduled()
+    except Exception:
+        log.exception("Failed to suppress stale calendar rows")
+
     tdicts = [e.template_dict() for e in events]
     message = templates.daily_outlook(now_sgt.strftime("%A, %d %b %Y"), tdicts)
     telegram_client.send_message(message)
     db.audit("outlook", "sent", output_json=f"{len(events)} events")
-    schedule_guard.mark_done("outlook")
-    log.info("Outlook published (%d events)", len(events))
+    if not forced:
+        schedule_guard.mark_done("outlook")
+    log.info("Outlook published (%d events%s)", len(events), " [force]" if forced else "")
 
 
 if __name__ == "__main__":

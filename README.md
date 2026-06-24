@@ -7,7 +7,7 @@ intraday analysis. **Phase 1** (this build): news + analysis only. No trade sign
 ## Scope (Phase 1)
 
 **Task 1 — USD News Automation**
-- Daily USD news outlook at **12:00 PM SGT** (high + medium impact, 24h forward window).
+- Daily USD news outlook at **12:00 PM SGT** (Forex Factory USD red/orange events relevant to XAUUSD, 24h forward window).
 - Pre-news alerts **1 hour** and **15 minutes** before each event.
 - Post-news breakdown: Actual vs Forecast, Previous vs Actual, USD impact, XAUUSD impact,
   and a deterministic **bullish / bearish / neutral** read (news polarity rules).
@@ -25,7 +25,7 @@ All user-facing times are **SGT (Asia/Singapore)**; all timestamps stored **UTC*
 | Config | `src/config.py` | Loads settings/secrets from environment. |
 | Database | `src/db.py` + `schema.sql` | MySQL: `economic_events`, `intraday_analyses`. |
 | News polarity | `src/polarity.py` | Deterministic event → USD/XAUUSD bias (no AI). |
-| Calendar service | `src/calendar_service.py` | Fetches USD news (FMP) — forecast/previous/actual. |
+| Calendar service | `src/calendar_service.py` + `src/forex_factory.py` | USD news from Forex Factory (red/orange); FMP for actual fallback. |
 | Market data | `src/market_data.py` | XAU/USD candles, price, EMAs, ATR, session levels. |
 | Chart renderer | `src/charts.py` | 200-candle intraday chart image (M5 default, `INTRADAY_TF`). |
 | Intraday analysis | `src/intraday.py` | Builds the daily plan (rule-based). |
@@ -51,7 +51,8 @@ OrangeHost **cPanel** (any account). The app lives at `~/wgc-xauusd-bot` with it
 4. **Install** — cPanel → *Terminal*: `cd ~/wgc-xauusd-bot && bash deploy.sh`
 5. **Cron** — cPanel → *Cron Jobs*: add the three lines from `cron.example` (replace
    `YOUR_USER` with your cPanel username).
-6. **Smoke test** — in Terminal:
+6. **Smoke test** — in Terminal (safe any time of day; `--force` does **not** block the
+   scheduled 12:00 / 14:30 SGT sends):
    `.venv/bin/python jobs/run_outlook.py --force`
    `.venv/bin/python jobs/run_intraday.py --force`
    Confirm messages arrive in the WGC Bots Telegram group.

@@ -1,15 +1,9 @@
-"""Economic Calendar Service — Financial Modeling Prep (stable API).
+"""Economic Calendar Service — Forex Factory (primary) + FMP (actual fallback).
 
-Pulls USD high/medium-impact events with forecast / previous / actual, normalises
-them to UTC + SGT, and applies the deterministic polarity classification.
-
-Notes
------
-* This account's key is NOT a legacy user, so the deprecated `/api/v3/economic_calendar`
-  endpoint is blocked — we use the current `/stable/economic-calendar` endpoint.
-* FMP returns the event `date` as a naive timestamp. Empirically this is **UTC**; it is
-  made configurable via FMP_CALENDAR_TZ so we can flip it in one place if the first live
-  pull shows otherwise (verify against a known release time on day one).
+Member-facing event lists come from Forex Factory's official weekly JSON export so
+the outlook matches FF red/orange USD folders exactly. FMP is only used as a
+fallback when polling for the released *actual* after an event if FF has not
+updated yet.
 """
 from __future__ import annotations
 
@@ -25,6 +19,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from config import config
 import polarity
 import news_filter
+import forex_factory
 
 log = logging.getLogger("calendar")
 
@@ -172,14 +167,8 @@ def normalize(raw: dict) -> Optional[Event]:
 
 
 def fetch_usd_events(from_date: str, to_date: str) -> List[Event]:
-    """Fetch and filter to USD high/medium events for the inclusive date range."""
-    raw = _request(from_date, to_date)
-    normalized = [e for e in (normalize(r) for r in raw) if e is not None]
-    events = news_filter.apply(normalized)          # FF-style: drop energy/auction/derived + composite PMI
-    events.sort(key=lambda e: e.scheduled_utc)
-    log.info("Fetched %d raw -> %d USD high/medium -> %d after FF filter (%s..%s)",
-             len(raw), len(normalized), len(events), from_date, to_date)
-    return events
+    """Fetch USD high/medium events from Forex Factory for the inclusive date range."""
+    return forex_factory.fetch_usd_events(from_date, to_date)
 
 
 def outlook_window(now_sgt: datetime):
@@ -210,12 +199,15 @@ def group_by_time(events: List[Event]) -> List[List[Event]]:
 
 
 def fetch_actual(event_name: str, scheduled_utc: datetime) -> Optional[str]:
-    """Re-fetch the event's day and return its 'actual' value once released (else None)."""
+    """Return the released actual from FF, falling back to a same-day FMP pull."""
+    actual = forex_factory.fetch_actual(event_name, scheduled_utc)
+    if actual:
+        return actual
     date = scheduled_utc.astimezone(pytz.UTC).strftime("%Y-%m-%d")
     try:
         raw = _request(date, date)
     except CalendarError as exc:
-        log.warning("fetch_actual failed for %s: %s", event_name, exc)
+        log.warning("fetch_actual FMP fallback failed for %s: %s", event_name, exc)
         return None
     target = event_name.strip().lower()
     for r in raw:

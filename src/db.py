@@ -95,7 +95,7 @@ def _column_exists(cur, table: str, column: str) -> bool:
 
 
 def _migrate_intraday_columns(cur) -> None:
-    """Rename legacy intraday_analyses columns to PDF §9 names on existing DBs."""
+    """Align intraday_analyses with schema.sql on existing DBs (renames + missing cols)."""
     renames = (
         ("raw_market_data_json", "market_data_json"),
         ("plan_json", "gpt_output_json"),
@@ -107,12 +107,35 @@ def _migrate_intraday_columns(cur) -> None:
                 f"ALTER TABLE intraday_analyses CHANGE `{old}` `{new}` LONGTEXT DEFAULT NULL"
             )
             log.info("Migrated intraday_analyses.%s -> %s", old, new)
-    if not _column_exists(cur, "intraday_analyses", "confidence"):
-        cur.execute(
-            "ALTER TABLE intraday_analyses ADD COLUMN confidence TINYINT UNSIGNED "
-            "DEFAULT NULL AFTER market_condition"
-        )
-        log.info("Added intraday_analyses.confidence column")
+
+    adds = (
+        ("chart_path", "VARCHAR(255) DEFAULT NULL"),
+        ("market_data_json", "LONGTEXT DEFAULT NULL"),
+        ("bias", "VARCHAR(16) DEFAULT NULL"),
+        ("market_condition", "VARCHAR(24) DEFAULT NULL"),
+        ("confidence", "TINYINT UNSIGNED DEFAULT NULL"),
+        ("gpt_output_json", "LONGTEXT DEFAULT NULL"),
+        ("telegram_message", "LONGTEXT DEFAULT NULL"),
+        ("timeframe", "VARCHAR(8) NOT NULL DEFAULT 'M5'"),
+    )
+    for col, typedef in adds:
+        if not _column_exists(cur, "intraday_analyses", col):
+            cur.execute(f"ALTER TABLE intraday_analyses ADD COLUMN `{col}` {typedef}")
+            log.info("Added intraday_analyses.%s", col)
+
+
+_intraday_schema_checked = False
+
+
+def _ensure_intraday_schema() -> None:
+    """Run intraday column migrations once per process (cheap no-op after first call)."""
+    global _intraday_schema_checked
+    if _intraday_schema_checked:
+        return
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            _migrate_intraday_columns(cur)
+    _intraday_schema_checked = True
 
 
 def _naive_utc(dt: datetime) -> str:
@@ -168,6 +191,7 @@ def fetch_for_alert(field: str, from_utc: datetime, to_utc: datetime) -> List[Di
     sql = f"""
         SELECT * FROM economic_events
         WHERE impact IN ('high','medium')
+          AND status = 'scheduled'
           AND scheduled_at_utc BETWEEN %s AND %s
           AND {field} = 0
         ORDER BY scheduled_at_utc
@@ -183,6 +207,7 @@ def fetch_for_postrelease(now_utc: datetime, max_age_minutes: int = 20) -> List[
     sql = """
         SELECT * FROM economic_events
         WHERE impact IN ('high','medium')
+          AND status = 'scheduled'
           AND sent_post_release = 0
           AND scheduled_at_utc <= %s
           AND scheduled_at_utc >= %s
@@ -203,6 +228,45 @@ def mark_sent(event_id: int, field: str) -> None:
             cur.execute(f"UPDATE economic_events SET {field}=1 WHERE id=%s", (event_id,))
 
 
+def suppress_event(event_id: int) -> None:
+    """Stop all alerts for a row that should not be tracked (stale/irrelevant)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE economic_events SET status='ignored', "
+                "sent_alert_60=1, sent_alert_15=1, sent_post_release=1 "
+                "WHERE id=%s",
+                (event_id,),
+            )
+
+
+def suppress_non_relevant_scheduled() -> int:
+    """Mark future scheduled rows ignored when they fail the XAUUSD filter or are legacy FMP."""
+    import news_filter
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, source, event_name FROM economic_events "
+                "WHERE status='scheduled' AND scheduled_at_utc > UTC_TIMESTAMP()"
+            )
+            rows = cur.fetchall()
+            suppressed = 0
+            for row in rows:
+                legacy_fmp = (row.get("source") or "").lower() == "fmp"
+                if legacy_fmp or not news_filter.is_xauusd_relevant(row["event_name"]):
+                    cur.execute(
+                        "UPDATE economic_events SET status='ignored', "
+                        "sent_alert_60=1, sent_alert_15=1, sent_post_release=1 "
+                        "WHERE id=%s",
+                        (row["id"],),
+                    )
+                    suppressed += 1
+    if suppressed:
+        log.info("Suppressed %d non-relevant/stale scheduled event(s)", suppressed)
+    return suppressed
+
+
 def update_actual(event_id: int, actual: Optional[str], polarity: Optional[str], status: str = "released") -> None:
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -218,14 +282,19 @@ def update_actual(event_id: int, actual: Optional[str], polarity: Optional[str],
 # ---------------------------------------------------------------------------
 
 def insert_intraday(row: Dict) -> int:
+    _ensure_intraday_schema()
     cols = ["instrument", "analysis_time_utc", "analysis_time_sgt", "timeframe",
             "chart_path", "market_data_json", "bias", "market_condition", "confidence",
             "gpt_output_json", "telegram_message"]
     placeholders = ", ".join(f"%({c})s" for c in cols)
     sql = f"INSERT INTO intraday_analyses ({', '.join(cols)}) VALUES ({placeholders})"
+    params = {c: row.get(c) for c in cols}
+    chart = params.get("chart_path")
+    if chart and len(str(chart)) > 255:
+        params["chart_path"] = str(chart)[-255:]
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, {c: row.get(c) for c in cols})
+            cur.execute(sql, params)
             return cur.lastrowid
 
 

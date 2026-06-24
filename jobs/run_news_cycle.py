@@ -78,6 +78,20 @@ def _send_grouped(group, builder, field):
     log.info("%s alert sent for %s (+%d grouped)", field, primary["event_name"], len(group) - 1)
 
 
+def _guard_relevant(rows):
+    """Drop stale/irrelevant DB rows; suppress so they never alert again."""
+    kept = []
+    for r in rows:
+        legacy_fmp = (r.get("source") or "").lower() == "fmp"
+        if legacy_fmp or not news_filter.is_xauusd_relevant(r["event_name"]):
+            db.suppress_event(r["id"])
+            log.info("Suppressed non-relevant event: %s (source=%s)",
+                     r["event_name"], r.get("source"))
+        else:
+            kept.append(r)
+    return kept
+
+
 def _do_alerts(now_utc):
     for field, lo, hi, builder in (
         ("sent_alert_60", ALERT_60_FROM, ALERT_60_TO, templates.alert_1h),
@@ -85,6 +99,7 @@ def _do_alerts(now_utc):
     ):
         rows = db.fetch_for_alert(field, now_utc + timedelta(minutes=lo),
                                   now_utc + timedelta(minutes=hi))
+        rows = _guard_relevant(rows)
         for group in _group_same_time(rows):
             try:
                 _send_grouped(group, builder, field)
@@ -93,7 +108,8 @@ def _do_alerts(now_utc):
 
 
 def _do_post_release(now_utc):
-    for row in db.fetch_for_postrelease(now_utc, POSTRELEASE_MAX_AGE):
+    rows = db.fetch_for_postrelease(now_utc, POSTRELEASE_MAX_AGE)
+    for row in _guard_relevant(rows):
         sched = row["scheduled_at_utc"]
         if sched.tzinfo is None:
             sched = pytz.UTC.localize(sched)

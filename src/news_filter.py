@@ -1,23 +1,14 @@
-"""Forex-Factory-style trimming of the FMP USD calendar.
+"""XAUUSD relevance filter for Forex Factory USD red/orange events.
 
-FMP returns more USD rows than Forex Factory shows as red/orange folders. The
-member-facing outlook must match what FF displays for XAUUSD traders, not the raw
-FMP feed. This module is the single place that decides "would Forex Factory show
-this?":
+FF shows every USD high/medium folder; gold traders only care about a subset that
+moves the dollar, rates, or risk — the drivers of XAUUSD. This module is the gate:
 
-* **Impact** is already constrained to high+medium upstream (``config.news_impacts``)
-  — that is our proxy for FF red (high) / orange (medium); low is dropped there.
-* **Exclusions** (this module): energy-inventory prints, treasury auctions and other
-  derived/duplicate rows that FF does not treat as major USD events for gold —
-  dropped even when FMP rates them medium/high.
-* **PMI de-dup**: when Flash Manufacturing PMI *and* Flash Services PMI release at the
-  same time, the Composite PMI is dropped (FF shows the two flashes, not the
-  composite). Composite is only kept if it stands alone.
-* **Display names**: the S&P Global flash PMIs are relabelled to FF's "Flash
-  Manufacturing/Services PMI" wording. This is render-only — the stored event name
-  stays raw so post-release ``fetch_actual`` lookups still match FMP exactly.
-
-If FMP and FF disagree, FF wins: this filter exists to make FMP look like FF.
+* **Allowlist** — macro releases and Fed events that routinely affect gold.
+* **Denylist** — energy inventories, auctions, mortgage prints, stress tests, etc.
+* **Speech rule** — generic political/Fed-member speeches are dropped; Fed Chair /
+  FOMC press events and **President Trump** speeches are kept.
+* **PMI de-dup** — drop Composite PMI when Flash Mfg + Flash Services share a slot.
+* **Display names** — FF-style PMI labels (render only).
 """
 from __future__ import annotations
 
@@ -28,43 +19,71 @@ from typing import List
 
 log = logging.getLogger("news_filter")
 
-# Event-name patterns FF does NOT surface as major USD folders for gold trading.
-# Case-insensitive; any hit -> the event is dropped before it reaches the DB, so it
-# also never triggers a 1h/15m alert or post-release breakdown.
-_EXCLUDE = re.compile(
-    r"crude oil"                      # EIA Crude Oil Inventories / API crude
-    r"|oil stock"                     # API Crude Oil Stock Change
-    r"|natural gas"                   # EIA Natural Gas Storage
-    r"|gasoline"                      # gasoline inventories / stocks
-    r"|distillate"                    # distillate stocks
-    r"|cushing"                       # Cushing crude inventories
-    r"|heating oil"
-    r"|rig count|baker hughes"        # oil/gas rig counts
-    r"|\bauction\b"                   # 10-Year Note / 30-Year Bond / Bill auctions
-    r"|treasury (bill|note|bond)"
-    r"|fed balance sheet|reserve balances|money supply|\bm2\b|reverse repo"  # derived monetary
-    r"|redbook|ibd/tipp|tipp economic"                    # minor/derived sentiment
-    r"|mba mortgage|mortgage applications|mortgage delinquenc"  # MBA weekly mortgage prints
-    r"|wasde|crop production|grain stocks",               # agricultural reports
+# Macro releases / Fed events that matter for XAUUSD (first match wins in apply).
+_INCLUDE = re.compile(
+    r"\bcpi\b|consumer price|inflation rate|core inflation"
+    r"|\bppi\b|producer price"
+    r"|core pce|\bpce\b|pce price"
+    r"|non.?farm|\bnfp\b|payrolls?|employment change|\badp\b"
+    r"|unemployment rate|unemployment claims|jobless claims|initial claims|continuing claims|\bjolts\b"
+    r"|retail sales|\bgdp\b|trade balance"
+    r"|\bpmi\b|\bism\b|manufacturing index|services index"
+    r"|philly fed|empire state|chicago pmi|richmond fed|dallas fed|kansas city fed"
+    r"|durable goods|factory orders|industrial production|capacity utilization"
+    r"|consumer confidence|consumer sentiment|umich|u\.?o\.?m|michigan sentiment"
+    r"|housing starts|building permits|new home sales|existing home sales|pending home sales"
+    r"|fomc|fed funds|federal funds|interest rate decision|monetary policy statement"
+    r"|fomc minutes|fed chair|powell|fomc press conference|fomc statement",
     re.IGNORECASE,
 )
 
-# PMI helpers. "composite" must not also count as manufacturing/services.
+# Always drop — not actionable for gold even if FF marks them orange/red.
+_EXCLUDE = re.compile(
+    r"crude oil|oil stock|natural gas|gasoline|distillate|cushing|heating oil"
+    r"|rig count|baker hughes"
+    r"|\bauction\b|treasury (bill|note|bond)"
+    r"|fed balance sheet|reserve balances|money supply|\bm2\b|reverse repo"
+    r"|redbook|ibd/tipp|tipp economic"
+    r"|\bmba\b|mortgage rate|mortgage applications|mortgage delinquenc"
+    r"|wasde|crop production|grain stocks"
+    r"|stress test|bank stress"
+    r"|beige book|loan officer survey|senior loan officer"
+    r"|wholesale inventories|business inventories|retail inventories"
+    r"|consumer credit|vehicle sales|chain store"
+    r"|current account",
+    re.IGNORECASE,
+)
+
+# Speech-shaped rows: keep Fed Chair / FOMC press / President Trump (risk & USD moves).
+_SPEECH = re.compile(r"\b(speaks?|speech|testif|press conference)\b", re.IGNORECASE)
+_FED_SPEECH_OK = re.compile(
+    r"fed chair|fomc press|powell|fomc statement|monetary policy",
+    re.IGNORECASE,
+)
+_TRUMP_SPEECH_OK = re.compile(r"president trump|\btrump\b", re.IGNORECASE)
+
 _COMPOSITE_PMI = re.compile(r"composite\s+pmi", re.IGNORECASE)
 _MFG_PMI = re.compile(r"manufacturing\s+pmi", re.IGNORECASE)
 _SVC_PMI = re.compile(r"services\s+pmi", re.IGNORECASE)
-
-# S&P Global / Markit flash PMI variants -> FF-style label (render only).
 _FLASH_HINT = re.compile(r"flash|s&p|markit", re.IGNORECASE)
 
 
-def _excluded(name: str) -> bool:
-    return bool(_EXCLUDE.search(name or ""))
+def is_xauusd_relevant(name: str) -> bool:
+    """True when an FF USD red/orange event should be tracked for XAUUSD."""
+    n = (name or "").strip()
+    if not n or _EXCLUDE.search(n):
+        return False
+    if _TRUMP_SPEECH_OK.search(n):
+        return True
+    if not _INCLUDE.search(n):
+        return False
+    if _SPEECH.search(n) and not _FED_SPEECH_OK.search(n):
+        return False
+    return True
 
 
 def _drop_composite_pmi(events: List) -> List:
-    """Remove Composite PMI only when its Flash Mfg + Flash Services siblings share
-    the exact release time (FF style). A standalone composite is left untouched."""
+    """Remove Composite PMI when Flash Mfg + Flash Services share the same release time."""
     by_time = defaultdict(list)
     for e in events:
         by_time[e.scheduled_utc].append(e)
@@ -81,22 +100,24 @@ def _drop_composite_pmi(events: List) -> List:
 
 
 def apply(events: List) -> List:
-    """FF-style filter over normalized Events. Returns the kept subset (order kept)."""
+    """Keep only XAUUSD-relevant FF events (order preserved)."""
     before = len(events)
-    kept = [e for e in events if not _excluded(e.event_name)]
-    after_exclude = len(kept)
+    kept = [e for e in events if is_xauusd_relevant(e.event_name)]
+    after_relevance = len(kept)
     kept = _drop_composite_pmi(kept)
 
-    excluded_n = before - after_exclude
-    composite_n = after_exclude - len(kept)
-    if excluded_n or composite_n:
-        log.info("FF filter: dropped %d excluded + %d composite-PMI (%d -> %d)",
-                 excluded_n, composite_n, before, len(kept))
+    dropped = before - after_relevance
+    composite_n = after_relevance - len(kept)
+    if dropped or composite_n:
+        log.info(
+            "XAUUSD filter: dropped %d non-relevant + %d composite-PMI (%d -> %d)",
+            dropped, composite_n, before, len(kept),
+        )
     return kept
 
 
 def display_name(name: str) -> str:
-    """FF-style display label. Render-only — never use for FMP matching/storage."""
+    """FF-style display label. Render-only — never use for calendar matching/storage."""
     n = (name or "").strip()
     low = n.lower()
     if "composite pmi" in low:

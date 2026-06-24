@@ -1,0 +1,34 @@
+[
+  {
+    "title": "President Trump Speaks",
+    "country": "USD",
+    "date": "2026-06-23T14:05:00-04:00",
+    "impact": "Medium",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Core PCE Price Index m/m",
+    "country": "USD",
+    "date": "2026-06-25T08:30:00-04:00",
+    "impact": "High",
+    "forecast": "0.3%",
+    "previous": "0.2%"
+  },
+  {
+    "title": "CPI m/m",
+    "country": "CAD",
+    "date": "2026-06-22T12:30:00-04:00",
+    "impact": "High",
+    "forecast": "0.1%",
+    "previous": "0.2%"
+  },
+  {
+    "title": "Retail Sales m/m",
+    "country": "USD",
+    "date": "2026-06-22T08:30:00-04:00",
+    "impact": "Low",
+    "forecast": "0.2%",
+    "previous": "0.1%"
+  }
+]

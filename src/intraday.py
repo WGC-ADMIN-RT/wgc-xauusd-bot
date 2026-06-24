@@ -450,6 +450,12 @@ def _rule_based_plan(snapshot: Dict, upcoming_events: Optional[List[Dict]] = Non
 def to_db_row(snapshot: Dict, plan: Dict, chart_path: Optional[str]) -> Dict:
     """Shape an intraday_analyses row (snapshot's in-memory candles are stripped)."""
     raw = {k: v for k, v in snapshot.items() if not k.startswith("_")}
+    conf = plan.get("confidence")
+    if conf is not None:
+        try:
+            conf = max(0, min(255, int(conf)))
+        except (TypeError, ValueError):
+            conf = None
     return {
         "instrument": snapshot["instrument"],
         "analysis_time_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
@@ -459,7 +465,7 @@ def to_db_row(snapshot: Dict, plan: Dict, chart_path: Optional[str]) -> Dict:
         "market_data_json": json.dumps(raw, default=str),
         "bias": plan["bias"],
         "market_condition": plan.get("market_condition") or plan.get("bias"),
-        "confidence": plan.get("confidence"),
+        "confidence": conf,
         "gpt_output_json": json.dumps(plan, default=str),
         "telegram_message": plan["member_message"],
     }

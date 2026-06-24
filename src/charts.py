@@ -14,9 +14,10 @@ the intraday job still publishes the text plan (chart marked unavailable).
 from __future__ import annotations
 
 import logging
+import math
 import os
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import requests
 
@@ -47,6 +48,59 @@ def _dig(snapshot: Dict, dotted: str):
     for part in dotted.split("."):
         cur = (cur or {}).get(part)
     return cur
+
+
+def _layout_zoom_for_hours(hours: float, width: int) -> Tuple[int, int]:
+    """Heuristic zoomOut/moveLeft so a saved layout shows ~``hours`` of M5 history."""
+    baseline_hours = 10.0 * (width / 800.0)
+    if hours <= baseline_hours * 1.1:
+        return 0, 0
+    ratio = hours / baseline_hours
+    zoom_out = min(25, max(1, round(math.log2(ratio) + 0.5)))
+    move_left = min(50, max(1, round(zoom_out * 1.5)))
+    return zoom_out, move_left
+
+
+def _chart_range_hours(chart_range: Dict) -> Optional[float]:
+    try:
+        start = datetime.fromisoformat(chart_range["from"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(chart_range["to"].replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return max(0.0, (end - start).total_seconds() / 3600)
+
+
+def _apply_chart_view(payload: Dict, snapshot: Dict, *, layout: bool) -> None:
+    """Pin the screenshot to two Asian sessions (08:00–16:00 SGT)."""
+    chart_range = snapshot.get("chart_range")
+    if not chart_range:
+        return
+
+    if not layout:
+        payload["range"] = chart_range
+        payload["timezone"] = config.timezone_name
+        return
+
+    if config.chartimg_zoom_in > 0:
+        payload["zoomIn"] = min(config.chartimg_zoom_in, 25)
+    if config.chartimg_zoom_out > 0:
+        payload["zoomOut"] = min(config.chartimg_zoom_out, 25)
+    if config.chartimg_move_left > 0:
+        payload["moveLeft"] = min(config.chartimg_move_left, 50)
+    if config.chartimg_move_right > 0:
+        payload["moveRight"] = min(config.chartimg_move_right, 50)
+    if any(payload.get(k) for k in ("zoomIn", "zoomOut", "moveLeft", "moveRight")):
+        return
+
+    hours = _chart_range_hours(chart_range)
+    if hours is None:
+        return
+    zoom_out, move_left = _layout_zoom_for_hours(hours, config.chartimg_width)
+    if zoom_out > 0:
+        payload["resetZoom"] = True
+        payload["zoomOut"] = zoom_out
+    if move_left > 0:
+        payload["moveLeft"] = move_left
 
 
 def _interval() -> str:
@@ -94,34 +148,27 @@ def render(snapshot: Dict) -> Optional[str]:
         log.warning("CHARTIMG_API_KEY not set — chart skipped (text plan still sent)")
         return None
     if config.chartimg_layout_id:
-        log.info("Chart: TradingView layout %s @ %s (saved layout zoom)",
+        log.info("Chart: TradingView layout %s @ %s (2 Asian sessions)",
                  config.chartimg_layout_id, _interval())
-        return _render_layout()
+        return _render_layout(snapshot)
     if config.intraday_tf != "5min":
         log.warning("INTRADAY_TF=%s — member chart spec is M5; set INTRADAY_TF=5min", config.intraday_tf)
     return _render_advanced(snapshot)
 
 
-def _layout_chart_payload() -> Dict:
-    """Chart-IMG layout request body — only symbol/interval/size unless .env overrides."""
+def _layout_chart_payload(snapshot: Dict) -> Dict:
+    """Chart-IMG layout request body — symbol/interval/size + two-session view."""
     payload = {
         "symbol": config.chartimg_symbol,
         "interval": _interval(),
         "width": config.chartimg_width,
         "height": config.chartimg_height,
     }
-    if config.chartimg_zoom_in > 0:
-        payload["zoomIn"] = min(config.chartimg_zoom_in, 25)
-    if config.chartimg_zoom_out > 0:
-        payload["zoomOut"] = min(config.chartimg_zoom_out, 25)
-    if config.chartimg_move_left > 0:
-        payload["moveLeft"] = min(config.chartimg_move_left, 50)
-    if config.chartimg_move_right > 0:
-        payload["moveRight"] = min(config.chartimg_move_right, 50)
+    _apply_chart_view(payload, snapshot, layout=True)
     return payload
 
 
-def _render_layout() -> Optional[str]:
+def _render_layout(snapshot: Dict) -> Optional[str]:
     """Render the user's saved TradingView layout via Chart-IMG layout-chart."""
     url = f"https://api.chart-img.com/v2/tradingview/layout-chart/{config.chartimg_layout_id}"
     headers = {"x-api-key": config.chartimg_api_key, "content-type": "application/json"}
@@ -131,7 +178,7 @@ def _render_layout() -> Optional[str]:
     if config.chartimg_tv_session_sign:
         headers["tradingview-session-id-sign"] = config.chartimg_tv_session_sign
     # The layout carries its own studies/drawings; we only set symbol/interval/size.
-    payload = _layout_chart_payload()
+    payload = _layout_chart_payload(snapshot)
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
     except requests.RequestException as exc:
@@ -163,6 +210,7 @@ def _render_advanced(snapshot: Dict) -> Optional[str]:
         "studies": studies,
         "drawings": drawings,
     }
+    _apply_chart_view(payload, snapshot, layout=False)
     try:
         resp = requests.post(
             CHARTIMG_URL,
