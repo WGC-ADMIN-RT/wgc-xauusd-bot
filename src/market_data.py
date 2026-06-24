@@ -330,13 +330,13 @@ def compute_asian_chart_range(
     now_sgt = now_sgt or datetime.now(tz)
 
     d0 = date.fromisoformat(asian_sessions[0]["date_sgt"])
-    d1 = date.fromisoformat(asian_sessions[1]["date_sgt"])
 
     start_sgt = tz.localize(datetime.combine(d0, time(ASIAN_SESSION_START_H, 0)))
     start_sgt -= timedelta(minutes=pad_before_min)
 
-    end_sgt = tz.localize(datetime.combine(d1, time(ASIAN_SESSION_END_H, 0)))
-    end_sgt = min(end_sgt, now_sgt) + timedelta(minutes=pad_after_min)
+    # Always end at now (+pad) so the right edge is the latest candle — not a future
+    # empty grid, and not yesterday 16:00 when the job runs overnight before Asian.
+    end_sgt = now_sgt + timedelta(minutes=pad_after_min)
     if end_sgt <= start_sgt:
         return None
 

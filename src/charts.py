@@ -52,20 +52,20 @@ def _dig(snapshot: Dict, dotted: str):
 def _layout_zoom_for_hours(hours: float, width: int) -> Tuple[int, int, int, int]:
     """Return ``(zoomOut, moveLeft, moveRight, zoomIn)`` for two Asian session boxes.
 
-    Layout charts cannot pin time via API as precisely as advanced charts. Keep
-    ``zoomOut`` low, ``moveLeft`` moderate, and ``moveRight`` high so the right
-    edge sits on the latest candle instead of an empty future grid.
+    Layout charts use pan/zoom only (``range`` breaks session shading on saved layouts).
+    Balance: enough ``moveLeft`` for two session columns, enough ``moveRight`` to drop
+    the empty future grid, moderate ``zoomIn`` for readable candles.
     """
-    target_hours = min(hours, 28.0)
+    target_hours = min(hours, 46.0)
     baseline_hours = 10.0 * (width / 800.0)
 
     if target_hours <= baseline_hours * 0.95:
-        return 2, 5, 18, 2
+        return 2, 6, 14, 2
 
-    zoom_out = max(2, min(4, round(target_hours / 12)))
-    move_left = max(5, min(22, round(target_hours / 4.5)))
-    move_right = max(20, min(45, move_left + 14))
-    zoom_in = max(2, min(6, round(30 / target_hours)))
+    zoom_out = max(3, min(6, round(target_hours / 9)))
+    move_left = max(8, min(28, round(target_hours / 3.8)))
+    move_right = max(12, min(35, round(target_hours / 5)))
+    zoom_in = max(2, min(4, round(28 / target_hours)))
     return zoom_out, move_left, move_right, zoom_in
 
 
@@ -89,10 +89,7 @@ def _apply_chart_view(payload: Dict, snapshot: Dict, *, layout: bool) -> None:
         payload["timezone"] = config.timezone_name
         return
 
-    # Layout endpoint: also send range+timezone (honoured on some plans) plus pan/zoom.
-    payload["range"] = chart_range
-    payload["timezone"] = config.timezone_name
-
+    # Layout charts: pan/zoom only — sending ``range`` hides session shading on layouts.
     manual = any(
         getattr(config, f"chartimg_{k}", 0) > 0
         for k in ("zoom_in", "zoom_out", "move_left", "move_right")
