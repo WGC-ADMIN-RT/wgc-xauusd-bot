@@ -17,6 +17,12 @@ def _get(key: str, default: str = "") -> str:
     return os.environ.get(key, default).strip()
 
 
+def _get_default(key: str, default: str) -> str:
+    """Like ``_get`` but treats blank env values as unset (uses default)."""
+    val = os.environ.get(key, default).strip()
+    return val or default
+
+
 def _get_int(key: str, default: int) -> int:
     try:
         return int(os.environ.get(key, str(default)))
@@ -56,7 +62,7 @@ class Config:
     # the intraday job still publishes the text plan (chart marked unavailable).
     chart_provider: str = field(default_factory=lambda: _get("CHART_PROVIDER", "chartimg"))
     chartimg_api_key: str = field(default_factory=lambda: _get("CHARTIMG_API_KEY"))
-    chartimg_symbol: str = field(default_factory=lambda: _get("CHARTIMG_SYMBOL", "OANDA:XAUUSD"))
+    chartimg_symbol: str = field(default_factory=lambda: _get_default("CHARTIMG_SYMBOL", "OANDA:XAUUSD"))
     chartimg_width: int = field(default_factory=lambda: _get_int("CHARTIMG_WIDTH", 800))
     chartimg_height: int = field(default_factory=lambda: _get_int("CHARTIMG_HEIGHT", 600))
     # Chart-IMG free tier caps total studies+drawings at 3 (and resolution at 800x600).

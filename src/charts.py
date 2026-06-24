@@ -181,6 +181,19 @@ def _render_layout(snapshot: Dict) -> Optional[str]:
         headers["tradingview-session-id-sign"] = config.chartimg_tv_session_sign
     # The layout carries its own studies/drawings; we only set symbol/interval/size.
     payload = _layout_chart_payload(snapshot)
+    log.info(
+        "Chart-IMG layout %s payload symbol=%s interval=%s tv_session=%s",
+        config.chartimg_layout_id,
+        payload.get("symbol"),
+        payload.get("interval"),
+        "yes" if config.chartimg_tv_session else "no",
+    )
+    if config.chartimg_layout_id and not config.chartimg_tv_session:
+        log.warning(
+            "CHARTIMG_TV_SESSION_ID not set — Chart-IMG may use the layout's saved "
+            "symbol (e.g. FOREX.com) instead of CHARTIMG_SYMBOL=%s",
+            config.chartimg_symbol,
+        )
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
     except requests.RequestException as exc:

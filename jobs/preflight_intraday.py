@@ -68,6 +68,22 @@ def _check_config() -> list[str]:
     else:
         lines.append("OK    no layout id — advanced chart + range API")
 
+    sym = config.chartimg_symbol
+    if sym and ":" in sym:
+        lines.append(f"OK    CHARTIMG_SYMBOL={sym}")
+    elif sym:
+        lines.append(f"WARN  CHARTIMG_SYMBOL={sym} — use EXCHANGE:SYMBOL (e.g. OANDA:XAUUSD)")
+    else:
+        lines.append("WARN  CHARTIMG_SYMBOL empty — defaulting to OANDA:XAUUSD")
+
+    if config.chartimg_layout_id and not config.chartimg_tv_session:
+        lines.append(
+            "WARN  CHARTIMG_TV_SESSION_ID missing — layout may ignore symbol override "
+            "and show the broker saved in TradingView (e.g. FOREX.com)"
+        )
+    elif config.chartimg_tv_session:
+        lines.append("OK    CHARTIMG_TV_SESSION_ID set (symbol override enabled)")
+
     if config.intraday_ai_enabled:
         if config.anthropic_api_key:
             lines.append(f"OK    AI intraday on ({config.intraday_ai_model}, {config.intraday_gameplans} plans)")
