@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
-from typing import List
+from typing import List, Optional
 
 log = logging.getLogger("news_filter")
 
@@ -70,16 +70,23 @@ _FLASH_HINT = re.compile(r"flash|s&p|markit", re.IGNORECASE)
 
 def is_xauusd_relevant(name: str) -> bool:
     """True when an FF USD red/orange event should be tracked for XAUUSD."""
+    return drop_reason(name) is None
+
+
+def drop_reason(name: str) -> Optional[str]:
+    """Why an FF USD red/orange row is dropped, or None if the bot would track it."""
     n = (name or "").strip()
-    if not n or _EXCLUDE.search(n):
-        return False
+    if not n:
+        return "empty title"
+    if _EXCLUDE.search(n):
+        return "denylist (not gold-relevant)"
     if _TRUMP_SPEECH_OK.search(n):
-        return True
+        return None
     if not _INCLUDE.search(n):
-        return False
+        return "not on XAUUSD allowlist"
     if _SPEECH.search(n) and not _FED_SPEECH_OK.search(n):
-        return False
-    return True
+        return "generic speech (not Fed Chair / FOMC)"
+    return None
 
 
 def _drop_composite_pmi(events: List) -> List:

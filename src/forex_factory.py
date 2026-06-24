@@ -23,6 +23,7 @@ from config import config
 log = logging.getLogger("forex_factory")
 
 FF_JSON_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+FF_LAST_JSON_URL = "https://nfs.faireconomy.media/ff_calendar_lastweek.json"
 FF_NEXT_JSON_URL = "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
 
 _APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -97,8 +98,42 @@ def _download(url: str) -> List[dict]:
     return data
 
 
+def load_raw_rows(refresh: bool = False) -> List[dict]:
+    """Load FF rows from this week (+ last/next when available). Used by audit tool."""
+    if not refresh:
+        age = _cache_age_seconds()
+        if age is not None and age < _CACHE_TTL_SECONDS:
+            cached = _read_cache()
+            if cached is not None:
+                return cached
+    return _fetch_all_weeks(refresh)
+
+
+def _fetch_all_weeks(refresh: bool) -> List[dict]:
+    """Download and merge available weekly FF JSON feeds (de-duped by title+date)."""
+    merged: Dict[str, dict] = {}
+    for url in (FF_LAST_JSON_URL, FF_JSON_URL, FF_NEXT_JSON_URL):
+        try:
+            for row in _download(url):
+                key = f"{row.get('date')}|{row.get('title')}|{row.get('country')}"
+                merged[key] = row
+        except ForexFactoryError as exc:
+            log.debug("FF feed skipped %s: %s", url, exc)
+
+    rows = list(merged.values())
+    if not rows:
+        if not refresh:
+            cached = _read_cache()
+            if cached is not None:
+                return cached
+        raise ForexFactoryError("No FF calendar data available")
+    if refresh or not _read_cache():
+        _write_cache(rows)
+    return rows
+
+
 def _load_raw_rows() -> List[dict]:
-    """Return merged this-week (+ next-week when available) FF rows."""
+    """Return merged weekly FF rows (cached this-week pull for live jobs)."""
     age = _cache_age_seconds()
     if age is not None and age < _CACHE_TTL_SECONDS:
         cached = _read_cache()
@@ -106,16 +141,8 @@ def _load_raw_rows() -> List[dict]:
             log.debug("FF calendar from cache (age %.0fs)", age)
             return cached
 
-    rows: List[dict] = []
     try:
-        rows = _download(FF_JSON_URL)
-        try:
-            nxt = _download(FF_NEXT_JSON_URL)
-            if nxt:
-                rows = rows + nxt
-        except ForexFactoryError:
-            log.debug("FF next-week feed unavailable; using this-week only")
-        _write_cache(rows)
+        rows = _fetch_all_weeks(refresh=True)
         log.info("FF calendar refreshed (%d rows)", len(rows))
         return rows
     except Exception as exc:
