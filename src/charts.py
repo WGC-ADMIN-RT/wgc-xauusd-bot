@@ -49,19 +49,23 @@ def _dig(snapshot: Dict, dotted: str):
     return cur
 
 
-def _layout_zoom_for_hours(hours: float, width: int) -> Tuple[int, int]:
-    """Chart-IMG layout charts only support zoomOut/moveLeft (no ``range`` API).
+def _layout_zoom_for_hours(hours: float, width: int) -> Tuple[int, int, int]:
+    """Return ``(zoomOut, moveLeft, moveRight)`` for two Asian session boxes.
 
-    Calibrated for two Asian sessions (~28–40h on M5): zoom out wide, then pan left
-    so yesterday's session box is on-screen beside today's.
+    Layout charts cannot use the ``range`` API. Too much ``zoomOut`` + ``moveLeft``
+    leaves a wide empty future grid on the right — ``moveRight`` tucks the view
+    against the latest candle while still showing yesterday + today session boxes.
     """
-    baseline_hours = 9.0 * (width / 800.0)
-    if hours <= baseline_hours * 0.9:
-        return 2, 6
+    target_hours = min(hours, 30.0)
+    baseline_hours = 10.0 * (width / 800.0)
 
-    zoom_out = min(25, max(4, round(hours / 6)))
-    move_left = min(50, max(10, round(hours / 2.2)))
-    return zoom_out, move_left
+    if target_hours <= baseline_hours * 0.95:
+        return 2, 5, 2
+
+    zoom_out = min(10, max(3, round(target_hours / 7)))
+    move_left = min(30, max(6, round(target_hours / 3.2)))
+    move_right = min(20, max(3, round(move_left * 0.35)))
+    return zoom_out, move_left, move_right
 
 
 def _chart_range_hours(chart_range: Dict) -> Optional[float]:
@@ -98,11 +102,15 @@ def _apply_chart_view(payload: Dict, snapshot: Dict, *, layout: bool) -> None:
     hours = _chart_range_hours(chart_range)
     if hours is None:
         return
-    zoom_out, move_left = _layout_zoom_for_hours(hours, config.chartimg_width)
+    zoom_out, move_left, move_right = _layout_zoom_for_hours(hours, config.chartimg_width)
     payload["resetZoom"] = True
     payload["zoomOut"] = zoom_out
     payload["moveLeft"] = move_left
-    log.info("Chart layout view: %.1fh span -> zoomOut=%s moveLeft=%s", hours, zoom_out, move_left)
+    payload["moveRight"] = move_right
+    log.info(
+        "Chart layout view: %.1fh span -> zoomOut=%s moveLeft=%s moveRight=%s",
+        hours, zoom_out, move_left, move_right,
+    )
 
 
 def _interval() -> str:

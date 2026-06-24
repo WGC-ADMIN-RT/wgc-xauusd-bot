@@ -317,8 +317,8 @@ def compute_asian_chart_range(
     asian_sessions: List[Dict],
     *,
     now_sgt: Optional[datetime] = None,
-    pad_before_min: int = 90,
-    pad_after_min: int = 45,
+    pad_before_min: int = 60,
+    pad_after_min: int = 15,
 ) -> Optional[Dict[str, str]]:
     """UTC ISO8601 ``{from, to}`` spanning the last two Asian sessions (08:00–16:00 SGT).
 
