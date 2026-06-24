@@ -9,17 +9,17 @@ from charts import _layout_zoom_for_hours  # noqa: E402
 
 
 class LayoutZoomTests(unittest.TestCase):
-    def test_two_session_span_tight_with_heavy_move_right(self):
-        zoom, left, right, zin = _layout_zoom_for_hours(45.0, 800)
-        self.assertGreaterEqual(zoom, 3)
-        self.assertGreaterEqual(left, 8)
-        self.assertGreaterEqual(right, 12)
-        self.assertGreaterEqual(zin, 2)
+    def test_two_session_preset(self):
+        zoom, left, right = _layout_zoom_for_hours(33.5, 800)
+        self.assertGreaterEqual(zoom, 4)
+        self.assertLessEqual(zoom, 6)
+        self.assertGreaterEqual(left, 11)
+        self.assertGreaterEqual(right, 16)
 
-    def test_short_span_still_pans(self):
-        zoom, left, right, zin = _layout_zoom_for_hours(8.0, 800)
-        self.assertGreaterEqual(right, 10)
-        self.assertGreaterEqual(zin, 1)
+    def test_overnight_before_asian(self):
+        zoom, left, right = _layout_zoom_for_hours(45.0, 800)
+        self.assertGreaterEqual(left, 11)
+        self.assertLessEqual(zoom, 6)
 
 
 if __name__ == "__main__":
