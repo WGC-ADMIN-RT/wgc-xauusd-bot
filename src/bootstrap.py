@@ -36,14 +36,19 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _load_env(path: str) -> None:
     if not os.path.isfile(path):
         return
+    pairs: dict[str, str] = {}
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, val = line.partition("=")
-            key, val = key.strip(), val.strip().strip('"').strip("'")
-            os.environ.setdefault(key, val)  # don't override real env
+            key = key.strip()
+            val = val.split("#", 1)[0].strip().strip('"').strip("'")
+            if key:
+                pairs[key] = val  # last occurrence in .env wins
+    for key, val in pairs.items():
+        os.environ.setdefault(key, val)  # shell/cron env still takes precedence
 
 
 def _setup_logging() -> None:
