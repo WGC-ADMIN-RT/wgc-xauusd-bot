@@ -14,7 +14,6 @@ the intraday job still publishes the text plan (chart marked unavailable).
 from __future__ import annotations
 
 import logging
-import math
 import os
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -51,13 +50,17 @@ def _dig(snapshot: Dict, dotted: str):
 
 
 def _layout_zoom_for_hours(hours: float, width: int) -> Tuple[int, int]:
-    """Heuristic zoomOut/moveLeft so a saved layout shows ~``hours`` of M5 history."""
-    baseline_hours = 10.0 * (width / 800.0)
-    if hours <= baseline_hours * 1.1:
-        return 0, 0
-    ratio = hours / baseline_hours
-    zoom_out = min(25, max(1, round(math.log2(ratio) + 0.5)))
-    move_left = min(50, max(1, round(zoom_out * 1.5)))
+    """Chart-IMG layout charts only support zoomOut/moveLeft (no ``range`` API).
+
+    Calibrated for two Asian sessions (~28–40h on M5): zoom out wide, then pan left
+    so yesterday's session box is on-screen beside today's.
+    """
+    baseline_hours = 9.0 * (width / 800.0)
+    if hours <= baseline_hours * 0.9:
+        return 2, 6
+
+    zoom_out = min(25, max(4, round(hours / 6)))
+    move_left = min(50, max(10, round(hours / 2.2)))
     return zoom_out, move_left
 
 
@@ -96,11 +99,10 @@ def _apply_chart_view(payload: Dict, snapshot: Dict, *, layout: bool) -> None:
     if hours is None:
         return
     zoom_out, move_left = _layout_zoom_for_hours(hours, config.chartimg_width)
-    if zoom_out > 0:
-        payload["resetZoom"] = True
-        payload["zoomOut"] = zoom_out
-    if move_left > 0:
-        payload["moveLeft"] = move_left
+    payload["resetZoom"] = True
+    payload["zoomOut"] = zoom_out
+    payload["moveLeft"] = move_left
+    log.info("Chart layout view: %.1fh span -> zoomOut=%s moveLeft=%s", hours, zoom_out, move_left)
 
 
 def _interval() -> str:
