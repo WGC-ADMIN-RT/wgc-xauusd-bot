@@ -189,6 +189,30 @@ def get_outlook(now_sgt: Optional[datetime] = None) -> List[Event]:
     return [e for e in events if start <= e.scheduled_sgt <= end]
 
 
+def get_tracked_events(
+    now_sgt: Optional[datetime] = None,
+    days_forward: int = 7,
+    days_back: int = 1,
+) -> List[Event]:
+    """All XAUUSD-relevant FF events for DB sync (wider than the 24h outlook message)."""
+    now_sgt = now_sgt or datetime.now(config.tz)
+    start = now_sgt.date() - timedelta(days=days_back)
+    end = now_sgt.date() + timedelta(days=days_forward)
+    return fetch_usd_events(start.isoformat(), end.isoformat())
+
+
+def sync_to_db(now_sgt: Optional[datetime] = None) -> int:
+    """Upsert tracked FF events so 1h/15m alerts can fire. Returns count upserted."""
+    import db
+
+    events = get_tracked_events(now_sgt)
+    for e in events:
+        db.upsert_event(e)
+    db.suppress_non_relevant_scheduled()
+    log.info("Calendar sync: upserted %d tracked event(s)", len(events))
+    return len(events)
+
+
 def group_by_time(events: List[Event]) -> List[List[Event]]:
     """Group events that release at the same SGT minute (spec: one alert per group)."""
     groups: Dict[str, List[Event]] = {}

@@ -38,16 +38,10 @@ def main() -> None:
             log.exception("Admin alert send failed")
         return
 
-    for e in events:
-        try:
-            db.upsert_event(e)
-        except Exception:
-            log.warning("Upsert failed for %s", e.event_name)
-
     try:
-        db.suppress_non_relevant_scheduled()
+        calendar_service.sync_to_db(now_sgt)
     except Exception:
-        log.exception("Failed to suppress stale calendar rows")
+        log.exception("Calendar sync failed")
 
     tdicts = [e.template_dict() for e in events]
     message = templates.daily_outlook(now_sgt.strftime("%A, %d %b %Y"), tdicts)

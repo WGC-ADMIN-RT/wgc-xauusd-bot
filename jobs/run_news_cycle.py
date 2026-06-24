@@ -166,6 +166,10 @@ def _publish_release(row, sched_utc, actual, now_utc):
 
 def main() -> None:
     now_utc = datetime.now(pytz.UTC)
+    try:
+        calendar_service.sync_to_db()
+    except Exception:
+        log.exception("Calendar sync failed")
     _do_alerts(now_utc)
     _do_post_release(now_utc)
 
