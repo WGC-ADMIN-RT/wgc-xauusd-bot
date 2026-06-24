@@ -9,18 +9,16 @@ from charts import _layout_zoom_for_hours  # noqa: E402
 
 
 class LayoutZoomTests(unittest.TestCase):
-    def test_two_session_span_balanced_not_overzoomed(self):
-        zoom, left, right = _layout_zoom_for_hours(33.5, 800)
-        self.assertLessEqual(zoom, 6)
-        self.assertGreaterEqual(zoom, 3)
-        self.assertLessEqual(left, 12)
-        self.assertGreaterEqual(right, 2)
+    def test_two_session_span_tight_with_heavy_move_right(self):
+        zoom, left, right, zin = _layout_zoom_for_hours(33.5, 800)
+        self.assertLessEqual(zoom, 4)
+        self.assertGreaterEqual(right, 20)
+        self.assertGreaterEqual(zin, 2)
 
     def test_short_span_still_pans(self):
-        zoom, left, right = _layout_zoom_for_hours(8.0, 800)
-        self.assertGreaterEqual(zoom, 1)
-        self.assertGreaterEqual(left, 2)
-        self.assertGreaterEqual(right, 1)
+        zoom, left, right, zin = _layout_zoom_for_hours(8.0, 800)
+        self.assertGreaterEqual(right, 10)
+        self.assertGreaterEqual(zin, 1)
 
 
 if __name__ == "__main__":

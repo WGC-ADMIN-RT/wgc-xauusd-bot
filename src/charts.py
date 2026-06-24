@@ -49,23 +49,24 @@ def _dig(snapshot: Dict, dotted: str):
     return cur
 
 
-def _layout_zoom_for_hours(hours: float, width: int) -> Tuple[int, int, int]:
-    """Return ``(zoomOut, moveLeft, moveRight)`` for two Asian session boxes.
+def _layout_zoom_for_hours(hours: float, width: int) -> Tuple[int, int, int, int]:
+    """Return ``(zoomOut, moveLeft, moveRight, zoomIn)`` for two Asian session boxes.
 
-    Layout charts cannot use the ``range`` API. Too much ``zoomOut`` + ``moveLeft``
-    leaves a wide empty future grid on the right — ``moveRight`` tucks the view
-    against the latest candle while still showing yesterday + today session boxes.
+    Layout charts cannot pin time via API as precisely as advanced charts. Keep
+    ``zoomOut`` low, ``moveLeft`` moderate, and ``moveRight`` high so the right
+    edge sits on the latest candle instead of an empty future grid.
     """
-    target_hours = min(hours, 30.0)
+    target_hours = min(hours, 28.0)
     baseline_hours = 10.0 * (width / 800.0)
 
     if target_hours <= baseline_hours * 0.95:
-        return 2, 5, 2
+        return 2, 5, 18, 2
 
-    zoom_out = min(10, max(3, round(target_hours / 7)))
-    move_left = min(30, max(6, round(target_hours / 3.2)))
-    move_right = min(20, max(3, round(move_left * 0.35)))
-    return zoom_out, move_left, move_right
+    zoom_out = max(2, min(4, round(target_hours / 12)))
+    move_left = max(5, min(22, round(target_hours / 4.5)))
+    move_right = max(20, min(45, move_left + 14))
+    zoom_in = max(2, min(6, round(30 / target_hours)))
+    return zoom_out, move_left, move_right, zoom_in
 
 
 def _chart_range_hours(chart_range: Dict) -> Optional[float]:
@@ -88,28 +89,40 @@ def _apply_chart_view(payload: Dict, snapshot: Dict, *, layout: bool) -> None:
         payload["timezone"] = config.timezone_name
         return
 
-    if config.chartimg_zoom_in > 0:
-        payload["zoomIn"] = min(config.chartimg_zoom_in, 25)
-    if config.chartimg_zoom_out > 0:
-        payload["zoomOut"] = min(config.chartimg_zoom_out, 25)
-    if config.chartimg_move_left > 0:
-        payload["moveLeft"] = min(config.chartimg_move_left, 50)
-    if config.chartimg_move_right > 0:
-        payload["moveRight"] = min(config.chartimg_move_right, 50)
-    if any(payload.get(k) for k in ("zoomIn", "zoomOut", "moveLeft", "moveRight")):
+    # Layout endpoint: also send range+timezone (honoured on some plans) plus pan/zoom.
+    payload["range"] = chart_range
+    payload["timezone"] = config.timezone_name
+
+    manual = any(
+        getattr(config, f"chartimg_{k}", 0) > 0
+        for k in ("zoom_in", "zoom_out", "move_left", "move_right")
+    )
+    if manual:
+        if config.chartimg_zoom_in > 0:
+            payload["zoomIn"] = min(config.chartimg_zoom_in, 25)
+        if config.chartimg_zoom_out > 0:
+            payload["zoomOut"] = min(config.chartimg_zoom_out, 25)
+        if config.chartimg_move_left > 0:
+            payload["moveLeft"] = min(config.chartimg_move_left, 50)
+        if config.chartimg_move_right > 0:
+            payload["moveRight"] = min(config.chartimg_move_right, 50)
+        payload["resetZoom"] = True
         return
 
     hours = _chart_range_hours(chart_range)
     if hours is None:
         return
-    zoom_out, move_left, move_right = _layout_zoom_for_hours(hours, config.chartimg_width)
+    zoom_out, move_left, move_right, zoom_in = _layout_zoom_for_hours(
+        hours, config.chartimg_width,
+    )
     payload["resetZoom"] = True
     payload["zoomOut"] = zoom_out
     payload["moveLeft"] = move_left
     payload["moveRight"] = move_right
+    payload["zoomIn"] = zoom_in
     log.info(
-        "Chart layout view: %.1fh span -> zoomOut=%s moveLeft=%s moveRight=%s",
-        hours, zoom_out, move_left, move_right,
+        "Chart layout view: %.1fh -> zoomOut=%s moveLeft=%s moveRight=%s zoomIn=%s",
+        hours, zoom_out, move_left, move_right, zoom_in,
     )
 
 
